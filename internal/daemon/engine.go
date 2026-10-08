@@ -54,7 +54,9 @@ type Engine struct {
 
 // maxAttempts bounds the claude calls for one answer. An attempt is retried
 // when claude cannot produce valid structured output, or when the answer puts
-// words in Jody's mouth; after the last attempt the call fails closed.
+// words in Jody's mouth. If the last attempt still misquotes him, the quotation
+// marks are stripped from the unmatched text (see stripQuotes), so the content
+// survives but is no longer presented as his words.
 const maxAttempts = 3
 
 // errStructuredOutput marks claude giving up on the JSON schema, which is
@@ -83,7 +85,9 @@ func (e *Engine) Answer(ctx context.Context, sess *Session, question string) (An
 		if len(bad) == 0 {
 			return a, nil
 		}
-		last = fmt.Errorf("answer quoted words Jody did not say: %q", bad)
+		if attempt == maxAttempts {
+			return stripQuotes(a, bad), nil
+		}
 		input += renderQuoteRejection(bad)
 	}
 	return Answer{}, fmt.Errorf("no acceptable answer after %d attempts: %w", maxAttempts, last)

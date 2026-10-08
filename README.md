@@ -17,6 +17,11 @@ to answer. Design and rules: `~/workspace/jody/agents.md`, "An agent that repres
   unreviewed material) is given as input, and the output is constrained to a JSON schema. Each
   answer carries `kind` (ANSWER / NEEDS_CONTEXT / BLOCKED_ON_HUMAN), `reasoning`,
   `would_change_mind`, `provenance` (QUOTED / DERIVED), `sources` and `missing`.
+- **Quotes are enforced in code, not by the prompt.** Any quoted phrase of three or more words
+  must match Jody's marked words in the repo (`*"..."*`) verbatim. If it doesn't, the answer is
+  retried with the bad quotes named. If the last of three attempts still misquotes him, the
+  quotation marks are stripped from the unmatched text, so the content survives but is never
+  presented as his words.
 - **Pushback is the next `ask` in the same session.** Earlier turns are replayed, and the
   daemon re-answers with the new information.
 

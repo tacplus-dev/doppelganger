@@ -79,3 +79,23 @@ func normalise(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	return strings.Trim(s, " .,;:!?")
 }
+
+// stripQuotes removes the quotation marks around each unattributed quotation in
+// every field, leaving the words. It only ever removes a claim that Jody said
+// something; it never adds or changes content.
+func stripQuotes(a Answer, bad []string) Answer {
+	var pairs []string
+	for _, q := range bad {
+		pairs = append(pairs, `"`+q+`"`, q, "“"+q+"”", q)
+	}
+	r := strings.NewReplacer(pairs...)
+	a.Answer = r.Replace(a.Answer)
+	a.Reasoning = r.Replace(a.Reasoning)
+	a.WouldChangeMind = r.Replace(a.WouldChangeMind)
+	sources := make([]string, len(a.Sources))
+	for i, src := range a.Sources {
+		sources[i] = r.Replace(src)
+	}
+	a.Sources = sources
+	return a
+}

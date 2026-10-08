@@ -69,20 +69,28 @@ fi
 	}
 }
 
-// TestEngineFailsClosedOnPersistentFabrication: a model that keeps misquoting
-// gets an error, never a fabricated quote.
-func TestEngineFailsClosedOnPersistentFabrication(t *testing.T) {
+// TestEnginePersistentFabricationIsStripped: a model that keeps misquoting gets
+// its quotation marks removed on the last attempt, never a fabricated quote.
+func TestEnginePersistentFabricationIsStripped(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir+"/repo/life.md", quoteRepo)
 	fake := dir + "/claude"
 	write(t, fake, `#!/bin/sh
 cat >/dev/null
-echo '{"structured_output":{"kind":"ANSWER","answer":"He said \"Leave education off outward material, and never claim a degree.\"","reasoning":"","would_change_mind":"","provenance":"QUOTED","sources":[],"missing":[]}}'
+echo '{"structured_output":{"kind":"ANSWER","answer":"He said \"Leave education off outward material, and never claim a degree.\" and \"better to just keep it SE.\"","reasoning":"","would_change_mind":"","provenance":"QUOTED","sources":[],"missing":[]}}'
 `)
 	chmod(t, fake)
 	e := &Engine{RepoDir: dir + "/repo", ClaudeBin: fake}
-	if _, err := e.Answer(t.Context(), &Session{}, "education?"); err == nil || !strings.Contains(err.Error(), "did not say") {
-		t.Fatalf("err = %v, want fail-closed", err)
+	a, err := e.Answer(t.Context(), &Session{}, "education?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `He said Leave education off outward material, and never claim a degree. and "better to just keep it SE."`
+	if a.Answer != want {
+		t.Fatalf("answer = %q\nwant     %q", a.Answer, want)
+	}
+	if bad := unattributedQuotes(a, markedQuotes(quoteRepo)); len(bad) != 0 {
+		t.Fatalf("still misquotes: %q", bad)
 	}
 }
 
