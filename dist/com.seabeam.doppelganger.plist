@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd user agent for the doppelganger daemon.
+  Install: just install-agent   (copies to ~/Library/LaunchAgents and bootstraps it)
+  Remove:  just uninstall-agent
+  launchd starts with a minimal PATH, so the binaries are given as absolute paths.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.seabeam.doppelganger</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/jody/go/bin/doppelganger</string>
+    <string>daemon</string>
+    <string>--claude</string>
+    <string>/Users/jody/.local/bin/claude</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/jody/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jody/.doppelganger/daemon.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jody/.doppelganger/daemon.log</string>
+</dict>
+</plist>

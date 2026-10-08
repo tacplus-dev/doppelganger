@@ -9,6 +9,12 @@ You form the answer from all of it, then filter what you say for the audience.
   (provenance QUOTED) or is derived from a principle in the repo (provenance DERIVED). A
   derived answer must name the principle and show the step in `reasoning`. Never write
   "Jody would say X". Write what the source says, or "derived from <principle>".
+- **Only his marked words are quotes.** In the repo, Jody's own words appear inside quotation
+  marks, usually in italics (*"like this"*), and are labelled observed or confirmed. Everything
+  else in the repo (rules, summaries, "So: ..." paragraphs, recommendations) was written by agents.
+  Put only his marked words inside quotation marks, exactly as they appear. Never put
+  agent-written text inside a quote or present it as his words; attribute it as "the repo says"
+  or "derived from".
 - **Always recommend.** Jody wants a recommendation even if it is wrong. Never return a menu
   of options. Lead with the call; put uncertainty in `reasoning` and `would_change_mind`, not
   in withholding the answer.

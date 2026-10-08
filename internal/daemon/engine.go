@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -51,11 +52,45 @@ type Engine struct {
 	Model     string // empty = the CLI's default
 }
 
+// maxAttempts bounds the claude calls for one answer. An attempt is retried
+// when claude cannot produce valid structured output, or when the answer puts
+// words in Jody's mouth; after the last attempt the call fails closed.
+const maxAttempts = 3
+
+// errStructuredOutput marks claude giving up on the JSON schema, which is
+// transient: the same input usually succeeds on the next call.
+var errStructuredOutput = errors.New("claude could not produce structured output")
+
 func (e *Engine) Answer(ctx context.Context, sess *Session, question string) (Answer, error) {
 	repo, err := loadRepo(e.RepoDir)
 	if err != nil {
 		return Answer{}, err
 	}
+	marked := markedQuotes(repo)
+	// The repo goes on stdin, not argv: it is too large for a command-line argument.
+	input := "# Repository\n\n" + repo + renderTurn(sess, question)
+	var last error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		a, err := e.run(ctx, input)
+		if errors.Is(err, errStructuredOutput) {
+			last = err
+			continue
+		}
+		if err != nil {
+			return Answer{}, err
+		}
+		bad := unattributedQuotes(a, marked)
+		if len(bad) == 0 {
+			return a, nil
+		}
+		last = fmt.Errorf("answer quoted words Jody did not say: %q", bad)
+		input += renderQuoteRejection(bad)
+	}
+	return Answer{}, fmt.Errorf("no acceptable answer after %d attempts: %w", maxAttempts, last)
+}
+
+// run makes one claude call and decodes the structured answer.
+func (e *Engine) run(ctx context.Context, input string) (Answer, error) {
 	args := []string{
 		"-p",
 		"--output-format", "json",
@@ -67,21 +102,30 @@ func (e *Engine) Answer(ctx context.Context, sess *Session, question string) (An
 		args = append(args, "--model", e.Model)
 	}
 	cmd := exec.CommandContext(ctx, e.ClaudeBin, args...)
-	// The repo goes on stdin, not argv: it is too large for a command-line argument.
-	cmd.Stdin = strings.NewReader("# Repository\n\n" + repo + renderTurn(sess, question))
+	cmd.Stdin = strings.NewReader(input)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return Answer{}, fmt.Errorf("claude: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
+	runErr := cmd.Run()
 	var out struct {
 		IsError          bool            `json:"is_error"`
+		Subtype          string          `json:"subtype"`
+		TerminalReason   string          `json:"terminal_reason"`
 		Result           string          `json:"result"`
 		StructuredOutput json.RawMessage `json:"structured_output"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		if runErr != nil {
+			return Answer{}, fmt.Errorf("claude: %w: stderr=%q stdout=%q", runErr, tail(stderr.String()), tail(stdout.String()))
+		}
 		return Answer{}, fmt.Errorf("decode claude output: %w", err)
+	}
+	if out.Subtype == "error_max_structured_output_retries" {
+		return Answer{}, errStructuredOutput
+	}
+	if runErr != nil {
+		// claude -p reports its own errors as JSON on stdout.
+		return Answer{}, fmt.Errorf("claude: %w: subtype=%q terminal_reason=%q result=%q", runErr, out.Subtype, out.TerminalReason, tail(out.Result))
 	}
 	if out.IsError || len(out.StructuredOutput) == 0 {
 		return Answer{}, fmt.Errorf("claude returned no structured answer: %s", out.Result)
@@ -91,6 +135,21 @@ func (e *Engine) Answer(ctx context.Context, sess *Session, question string) (An
 		return Answer{}, fmt.Errorf("decode answer: %w", err)
 	}
 	return a, nil
+}
+
+func renderQuoteRejection(bad []string) string {
+	var b strings.Builder
+	b.WriteString("\n# Your previous answer was rejected\n\n")
+	b.WriteString("It put these in quotation marks, but they are not Jody's marked words (text inside *\"...\"* in the repo). ")
+	b.WriteString("They are agent-written text from the repo, or your own paraphrase. Answer the same question again. ")
+	b.WriteString("Use quotation marks only around Jody's marked words, copied exactly. ")
+	b.WriteString("Text written by agents in the repo: drop the quotation marks and attribute it as \"the repo says\". ")
+	b.WriteString("Text you are drafting for the caller (a bio, a sentence to use): give it without quotation marks, ")
+	b.WriteString("for example on its own line after \"Suggested text:\".\n\n")
+	for _, q := range bad {
+		fmt.Fprintf(&b, "- %q\n", q)
+	}
+	return b.String()
 }
 
 // renderTurn is the user message: caller context, earlier turns, the question.
@@ -147,4 +206,13 @@ func loadRepo(dir string) (string, error) {
 		fmt.Fprintf(&b, "<file path=%q>\n%s\n</file>\n\n", rel, data)
 	}
 	return b.String(), nil
+}
+
+// tail keeps the end of a process's output for an error message.
+func tail(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 2000 {
+		return "…" + s[len(s)-2000:]
+	}
+	return s
 }
