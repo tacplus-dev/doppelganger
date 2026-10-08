@@ -1,0 +1,7 @@
+tools:
+    go: "1.25"
+lang:
+    go:
+        dependencies:
+            google.golang.org/grpc: v1.78.0
+            google.golang.org/protobuf: v1.36.11

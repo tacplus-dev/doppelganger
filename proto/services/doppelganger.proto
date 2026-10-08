@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package doppelganger;
+
+import "sys/spec.proto";
+
+option (spec.service) = {name: "doppelganger"};
+
+// ---------------------------------------------------------------------------
+// Doppelganger C2D interface (client-to-daemon).
+//
+// Doppelganger answers questions on Jody's behalf from the ~/workspace/jody
+// repo. Its only role is to answer. Callers open a session, give context
+// (who they are, who the answer is for, what it is for), and ask. Pushback is
+// just the next GenerateAnswer in the same session: the daemon re-answers with whatever
+// the caller added; it does not repeat itself.
+//
+// Caller context is on the honor system for now. C2D is unauthenticated;
+// filesystem permissions on the socket are the boundary.
+// ---------------------------------------------------------------------------
+
+message CreateSessionRequest {
+  // Optional context given at creation. More can be added with UpdateSession.
+  repeated string context = 1 [(spec.assert_max_size) = 100];
+}
+
+message CreateSessionResponse {
+  string session_id = 1 [(spec.assert_required) = true];
+}
+
+message UpdateSessionRequest {
+  string          session_id = 1 [(spec.assert_required) = true];
+  // Context to append. Existing context is kept.
+  repeated string context    = 2 [(spec.assert_max_size) = 100];
+}
+
+message UpdateSessionResponse {}
+
+message GenerateAnswerRequest {
+  string session_id = 1 [(spec.assert_required) = true];
+  string question   = 2 [(spec.assert_required) = true];
+}
+
+enum AnswerKind {
+  ANSWER_KIND_UNSPECIFIED      = 0;
+  ANSWER_KIND_ANSWER           = 1;  // act on it
+  ANSWER_KIND_NEEDS_CONTEXT    = 2;  // tell us more (see missing), then ask again
+  ANSWER_KIND_BLOCKED_ON_HUMAN = 3;  // only Jody can answer; treat as a blocker, keep working
+}
+
+enum Provenance {
+  PROVENANCE_UNSPECIFIED = 0;
+  PROVENANCE_QUOTED      = 1;  // quotes something Jody said
+  PROVENANCE_DERIVED     = 2;  // derived from a stated principle; not said by Jody
+}
+
+message GenerateAnswerResponse {
+  AnswerKind      kind              = 1 [(spec.assert_enum_defined) = true];
+  string          answer            = 2;
+  // Why. Gives the caller something to push back on.
+  string          reasoning         = 3;
+  // What would change this answer.
+  string          would_change_mind = 4;
+  Provenance      provenance        = 5;
+  // Sources in the jody repo the answer rests on (file paths, quotes).
+  repeated string sources           = 6 [(spec.assert_max_size) = 100];
+  // For NEEDS_CONTEXT: what the caller must tell us.
+  repeated string missing           = 7 [(spec.assert_max_size) = 100];
+}
+
+service Doppelganger {
+  option (spec.service_c2d) = {socket_path: "/tmp/doppelganger.sock"};
+
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
+  rpc UpdateSession(UpdateSessionRequest) returns (UpdateSessionResponse);
+  rpc GenerateAnswer(GenerateAnswerRequest) returns (GenerateAnswerResponse);
+}

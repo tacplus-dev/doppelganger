@@ -1,0 +1,4 @@
+language: go
+pkg: com.gitlab.seabeam.tools.doppelganger
+src: proto
+output-dir: model
