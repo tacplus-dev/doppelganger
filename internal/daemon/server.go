@@ -3,24 +3,34 @@ package daemon
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net"
-	"os"
 
+	"gitlab.com/seabeam/tools/doppelganger/model/chassis/servicemanager"
+	sm "gitlab.com/seabeam/tools/doppelganger/model/s2sm"
+	fe "gitlab.com/seabeam/tools/doppelganger/model/s2sm/grpc/servers/services/doppelganger"
 	pb "gitlab.com/seabeam/tools/doppelganger/model/types/services/doppelganger"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// Server implements the tacplus-generated Doppelganger C2D service.
+// Server implements the tacplus-generated Doppelganger C2D handler. The
+// generated standalone host (sm.ServeC2DStandalone) wraps it with request and
+// response validation and serves it on the Unix socket; C2D has no caller
+// token, so caller is always nil.
 type Server struct {
-	pb.UnimplementedDoppelgangerServer
 	Sessions *SessionStore
 	Engine   *Engine
 }
 
-func (s *Server) CreateSession(_ context.Context, req *pb.CreateSessionRequest) (*pb.CreateSessionResponse, error) {
+var _ sm.Handler = (*Server)(nil)
+
+// DoppelgangerGrpcImpl returns the handler the generated wrapper serves.
+func (s *Server) DoppelgangerGrpcImpl() fe.DoppelgangerHandler { return s }
+
+// Shutdown runs after the socket has drained. Sessions are written on every
+// change, so there is nothing to flush.
+func (s *Server) Shutdown(context.Context) {}
+
+func (s *Server) CreateSession(_ context.Context, _ *servicemanager.Caller, req *pb.CreateSessionRequest) (*pb.CreateSessionResponse, error) {
 	sess, err := s.Sessions.Create(req.GetContext())
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
@@ -28,14 +38,14 @@ func (s *Server) CreateSession(_ context.Context, req *pb.CreateSessionRequest) 
 	return &pb.CreateSessionResponse{SessionId: sess.ID}, nil
 }
 
-func (s *Server) UpdateSession(_ context.Context, req *pb.UpdateSessionRequest) (*pb.UpdateSessionResponse, error) {
+func (s *Server) UpdateSession(_ context.Context, _ *servicemanager.Caller, req *pb.UpdateSessionRequest) (*pb.UpdateSessionResponse, error) {
 	if err := s.Sessions.AppendContext(req.GetSessionId(), req.GetContext()); err != nil {
 		return nil, sessionError(err)
 	}
 	return &pb.UpdateSessionResponse{}, nil
 }
 
-func (s *Server) GenerateAnswer(ctx context.Context, req *pb.GenerateAnswerRequest) (*pb.GenerateAnswerResponse, error) {
+func (s *Server) GenerateAnswer(ctx context.Context, _ *servicemanager.Caller, req *pb.GenerateAnswerRequest) (*pb.GenerateAnswerResponse, error) {
 	sess, err := s.Sessions.Get(req.GetSessionId())
 	if err != nil {
 		return nil, sessionError(err)
@@ -63,29 +73,4 @@ func sessionError(err error) error {
 		return status.Error(codes.NotFound, err.Error())
 	}
 	return status.Error(codes.Internal, err.Error())
-}
-
-// Serve listens on the Unix socket until ctx is cancelled. Tacplus generates a
-// C2D server wrapper for Rust only; for Go it emits the gRPC registration, so the
-// listener is wired here. The socket is 0600: filesystem permissions are the
-// C2D security boundary.
-func Serve(ctx context.Context, socketPath string, srv *Server) error {
-	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove stale socket: %w", err)
-	}
-	lis, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", socketPath, err)
-	}
-	if err := os.Chmod(socketPath, 0o600); err != nil {
-		lis.Close()
-		return fmt.Errorf("chmod socket: %w", err)
-	}
-	gs := grpc.NewServer()
-	pb.RegisterDoppelgangerServer(gs, srv)
-	go func() {
-		<-ctx.Done()
-		gs.GracefulStop()
-	}()
-	return gs.Serve(lis)
 }

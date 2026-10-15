@@ -42,8 +42,9 @@ just test
 
 ## Notes
 
-- Tacplus generates a C2D *server* wrapper only for Rust. For Go it emits the client manager and
-  the gRPC registration, so `internal/daemon/server.go` wires the Unix listener itself.
-- The socket path is declared in the proto and repeated as a constant in
-  `cmd/doppelganger/main.go`, because tacplus does not export it to Go. Keep them in sync.
+- The daemon is hosted by the tacplus-generated standalone C2D host (`sm.ServeC2DStandalone` in
+  `model/s2sm`): the generated Unix-socket server and wrappers (validation, 0600 socket, no token
+  auth) with no cluster behind it. `internal/daemon/server.go` is only the handler.
+- The socket path is declared once, in the proto; the daemon and the CLI use the generated
+  `sm.C2DSocketPath`.
 - Runs locally now; remote later.

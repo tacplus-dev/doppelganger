@@ -22,16 +22,13 @@ import (
 	"time"
 
 	"gitlab.com/seabeam/tools/doppelganger/internal/daemon"
-	sm "gitlab.com/seabeam/tools/doppelganger/model/c2dm"
+	c2dm "gitlab.com/seabeam/tools/doppelganger/model/c2dm"
 	gc "gitlab.com/seabeam/tools/doppelganger/model/c2dm/grpc/clients/services/doppelganger"
+	sm "gitlab.com/seabeam/tools/doppelganger/model/s2sm"
 	pb "gitlab.com/seabeam/tools/doppelganger/model/types/services/doppelganger"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
-
-// socketPath must match (spec.service_c2d).socket_path in
-// proto/services/doppelganger.proto.
-const socketPath = "/tmp/doppelganger.sock"
 
 // answerTimeout covers a full claude run over the whole repo.
 const answerTimeout = 5 * time.Minute
@@ -91,7 +88,7 @@ func runDaemon(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return daemon.Serve(ctx, socketPath, &daemon.Server{
+	return sm.ServeC2DStandalone(ctx, sm.C2DSocketPath, &daemon.Server{
 		Sessions: sessions,
 		Engine:   &daemon.Engine{RepoDir: *repo, ClaudeBin: *claudeBin, Model: *model},
 	})
@@ -141,9 +138,9 @@ func ask(args []string) error {
 func call(timeout time.Duration, fn func(context.Context, *gc.DoppelgangerClient) (proto.Message, error)) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	mgr, err := sm.Dial(ctx, socketPath)
+	mgr, err := c2dm.Dial(ctx, sm.C2DSocketPath)
 	if err != nil {
-		return fmt.Errorf("daemon not reachable at %s: %w", socketPath, err)
+		return fmt.Errorf("daemon not reachable at %s: %w", sm.C2DSocketPath, err)
 	}
 	defer mgr.Close()
 	c := mgr.Grpc().Clients().Services().DoppelgangerClient().WithTimeout(timeout)

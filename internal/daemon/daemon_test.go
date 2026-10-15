@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	sm "gitlab.com/seabeam/tools/doppelganger/model/c2dm"
+	c2dm "gitlab.com/seabeam/tools/doppelganger/model/c2dm"
+	sm "gitlab.com/seabeam/tools/doppelganger/model/s2sm"
 	pb "gitlab.com/seabeam/tools/doppelganger/model/types/services/doppelganger"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -82,8 +83,10 @@ func TestLoadRepoExcludesInboxAndGit(t *testing.T) {
 	}
 }
 
-// TestEndToEnd drives the real C2D socket through the tacplus-generated client,
-// with a fake claude binary standing in for the model.
+// TestEndToEnd drives the real C2D socket through the tacplus-generated
+// standalone host and client, with a fake claude binary standing in for the
+// model. It binds its own socket, not sm.C2DSocketPath, so it never takes over
+// the socket of a daemon already running on this machine.
 func TestEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	repo := filepath.Join(dir, "repo")
@@ -111,13 +114,16 @@ echo '{"is_error":false,"result":"","structured_output":{"kind":"ANSWER","answer
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go Serve(ctx, socketPath, &Server{Sessions: store, Engine: &Engine{RepoDir: repo, ClaudeBin: fake}})
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- sm.ServeC2DStandalone(ctx, socketPath, &Server{Sessions: store, Engine: &Engine{RepoDir: repo, ClaudeBin: fake}})
+	}()
 
 	dialCtx, dialCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer dialCancel()
-	var mgr *sm.ServiceManager
+	var mgr *c2dm.ServiceManager
 	for {
-		if mgr, err = sm.Dial(dialCtx, socketPath); err == nil {
+		if mgr, err = c2dm.Dial(dialCtx, socketPath); err == nil {
 			break
 		}
 		if dialCtx.Err() != nil {
@@ -162,6 +168,22 @@ echo '{"is_error":false,"result":"","structured_output":{"kind":"ANSWER","answer
 	_, err = c.GenerateAnswer(ctx, &pb.GenerateAnswerRequest{SessionId: "0123456789abcdef0123456789abcdef", Question: "q"})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown session err = %v, want NotFound", err)
+	}
+
+	// The generated wrapper validates on the server too: a request the client
+	// would refuse to send (session_id is assert_required), sent on the raw stub,
+	// never reaches the handler.
+	_, err = pb.NewDoppelgangerClient(mgr.Conn()).GenerateAnswer(ctx, &pb.GenerateAnswerRequest{Question: "q"})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("server-side validation err = %v, want InvalidArgument", err)
+	}
+
+	cancel()
+	if err := <-serveErr; err != nil {
+		t.Fatalf("ServeC2DStandalone returned %v on shutdown", err)
+	}
+	if _, err := os.Stat(socketPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("socket still present after shutdown: %v", err)
 	}
 }
 
