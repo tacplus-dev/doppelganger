@@ -2,3 +2,5 @@ language: go
 pkg: com.gitlab.seabeam.tools.doppelganger
 src: proto
 output-dir: model
+header: |
+  Copyright (c) 2026 SeaBeam LLC. All rights reserved.
