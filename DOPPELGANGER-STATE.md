@@ -138,3 +138,14 @@ finish the open items above, then size the tacplus work so it does not disturb t
   tacplus-registry-and-floor).
 - ~/workspace/github/tacplus-dev/tacplus was deleted then RESTORED (checked out at 699cbe4): sonar/backend/build.sh pins
   TACPLUS_REPO to that path and sha. Conflicts with "no code on disk unless working" — Jody to decide.
+
+## tacplus side as of 2026-10-23 evening (branch `registry-and-floor`, github.com/tacplus-dev/tacplus)
+- Sys contract: `sys/minter.proto` (minter.Minter, vservice 102, host label kernel), `sys/servicehealth.proto`,
+  well-known state host label, config state routing. A service generates alone (llmproxy proved it).
+- `tacplus.yaml` `depends: [llmproxy]` resolves through the registry and merges llmproxy's proto. For doppelganger:
+  add that line plus `option (spec.grpc_s2s_client) = {service: "llmproxy.LlmProxy"};` in doppelganger.proto when
+  the C2D surface becomes an S2S/C2S fleet surface; then the generated `LlmProxyClient` is the engine's Provider.
+- llmproxy still needs: crew import removed (issue #1), an output-schema field (issue #2), `doppelganger` in its
+  allow-list or a fleet-level allow-list (issue #3).
+- Not done: the fleet build (manifest, transitive deps, whole-fleet checks); kernel hosting minter.Minter / the sys
+  ServiceHealth is unverified until then. Cross-test fixtures deferred.
