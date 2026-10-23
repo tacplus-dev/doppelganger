@@ -39,7 +39,7 @@ func fakeAnthropic(t *testing.T, stopReason, text string) (*Anthropic, *map[stri
 		json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(srv.Close)
-	p := NewAnthropic("k", "")
+	p := NewAnthropic("")
 	p.client = anthropic.NewClient(option.WithAPIKey("k"), option.WithBaseURL(srv.URL), option.WithMaxRetries(0))
 	return p, &body
 }

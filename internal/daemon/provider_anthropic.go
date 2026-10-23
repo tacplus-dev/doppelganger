@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 // DefaultAnthropicModel is used when the daemon is given no model.
@@ -16,16 +15,22 @@ const DefaultAnthropicModel = "claude-opus-5-5"
 // Anthropic answers through the Messages API directly: no tools, the repo in a
 // cached system block, the answer constrained to the schema by structured
 // outputs.
+//
+// Credentials come from the SDK's default chain, never from this program: in
+// the fleet, workload identity federation (ANTHROPIC_FEDERATION_RULE_ID,
+// ANTHROPIC_ORGANIZATION_ID, ANTHROPIC_IDENTITY_TOKEN_FILE, set from kernel
+// config); on a workstation, the profile written by `ant auth login`. There is
+// no API key to hold, rotate or leak.
 type Anthropic struct {
 	client anthropic.Client
 	model  string
 }
 
-func NewAnthropic(apiKey, model string) *Anthropic {
+func NewAnthropic(model string) *Anthropic {
 	if model == "" {
 		model = DefaultAnthropicModel
 	}
-	return &Anthropic{client: anthropic.NewClient(option.WithAPIKey(apiKey)), model: model}
+	return &Anthropic{client: anthropic.NewClient(), model: model}
 }
 
 func (p *Anthropic) Complete(ctx context.Context, req Request) (json.RawMessage, error) {
