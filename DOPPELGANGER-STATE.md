@@ -149,3 +149,8 @@ finish the open items above, then size the tacplus work so it does not disturb t
   allow-list or a fleet-level allow-list (issue #3).
 - Not done: the fleet build (manifest, transitive deps, whole-fleet checks); kernel hosting minter.Minter / the sys
   ServiceHealth is unverified until then. Cross-test fixtures deferred.
+- Fleet build DONE (first deliverable): `tacplus fleet build` in github.com/tacplus-dev/fleet-dev (private; fleet.yaml =
+  kernel + llmproxy + doppelganger; fleet.lock has the commits; build/proto is the merged tree). doppelganger `main` was
+  fast-forwarded to `engine-provider` (the fleet build caught the stale lock on main). Kernel generation against
+  build/proto fails ONLY on crew.* residency records: llmproxy's crew.proto import (public issue #1). Everything else
+  in the fleet pipeline passed (routing, host labels, minter uniqueness, registry).
