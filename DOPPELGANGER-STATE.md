@@ -1,4 +1,4 @@
-# Doppelganger — pick-up state (written 2026-10-23)
+# Doppelganger — pick-up state (written 2026-10-23, updated same day after the repo move)
 
 Read this first after a context clear. Memory pointer: `~/.claude/.../memory/doppelganger-repo-lockdown.md`
 (that file is the 2026-10-09 → 10-14 decision log; this file is the current truth where they differ).
@@ -11,7 +11,9 @@ verbatim, else retry; on the third failure the quote marks are stripped (content
 his words).
 
 ## Where things are
-- Code: `~/workspace/gitlab/seabeam/tools/doppelganger` (Go, main, 7 commits, clean). No remote configured yet.
+- Code: `~/workspace/github/tacplus-dev/doppelganger` (moved 2026-10-23 from gitlab/seabeam/tools/). Remote = github.com/tacplus-dev/doppelganger
+  (PRIVATE, org tacplus-dev). Module `github.com/tacplus-dev/doppelganger`; generated output in `tacplus/` (git-ignored). Branches:
+  `main`, `engine-provider` (all of 2026-10-23's work; not merged to main yet).
 - Context repo (data): `~/workspace/jody`, origin = **gitlab.com/secondstar/jody** (private project 87501898 in
   private top-level group `secondstar`, id 144515190, "Second Star", Free tier). `main` is protected: push = No one,
   merge = Maintainers (Jody), no force. Local main == origin/main (444f2f2). `inbox/` is untracked on purpose
