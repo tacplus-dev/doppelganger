@@ -1,7 +1,8 @@
 # Managed by tacplus — do not edit IDs manually.
-global: https://github.com/tacplus-dev/registry.git
+registries:
+    - https://github.com/tacplus-dev/registry.git
 services:
     - name: doppelganger
       id: 101
-      repo: https://github.com/tacplus-dev/doppelganger.git
+      contract: https://github.com/tacplus-dev/doppelganger.git
       visibility: public
