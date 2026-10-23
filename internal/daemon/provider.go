@@ -10,6 +10,11 @@ import (
 // prompt, the retry loop and quote enforcement; a Provider only turns one
 // Request into the model's JSON answer. Every provider gets the same contract:
 // no tools, the whole repo as input, output constrained to Request.Schema.
+//
+// In the fleet the provider is the tacplus-generated llmproxy S2S client:
+// doppelganger never holds a model credential, llmproxy does (with federated
+// identity to the model vendor). ClaudeCLI is the interim stand-in until that
+// client is generated here.
 type Provider interface {
 	Complete(ctx context.Context, req Request) (json.RawMessage, error)
 }

@@ -77,7 +77,7 @@ func runDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	repo := fs.String("repo", filepath.Join(home, "workspace", "jody"), "jody context repo")
 	stateDir := fs.String("state-dir", filepath.Join(home, ".doppelganger", "sessions"), "session state directory")
-	providerName := fs.String("provider", "anthropic", "model provider: anthropic | claude (the claude CLI, interim)")
+	providerName := fs.String("provider", "claude", "model provider: claude (the claude CLI, interim until the llmproxy client lands)")
 	model := fs.String("model", "", "model for answers (default: the provider's default)")
 	claudeBin := fs.String("claude", "claude", "claude CLI binary (provider=claude)")
 	if err := fs.Parse(args); err != nil {
@@ -85,10 +85,6 @@ func runDaemon(args []string) error {
 	}
 	var provider daemon.Provider
 	switch *providerName {
-	case "anthropic":
-		// Credentials: the SDK's default chain (federation env in the fleet,
-		// the `ant auth login` profile on a workstation). Nothing is read here.
-		provider = daemon.NewAnthropic(*model)
 	case "claude":
 		provider = &daemon.ClaudeCLI{Bin: *claudeBin, Model: *model}
 	default:
