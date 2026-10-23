@@ -157,9 +157,11 @@ finish the open items above, then size the tacplus work so it does not disturb t
 
 ## 2026-10-23 night — the dev fleet exists and kernel generates from it
 - tacplus-dev now holds: registry, tacplus (branch `registry-and-floor`, all of today's work, not merged), kernel, opa, gateway,
-  stratum, eventbus, kmaker, oauth, letsencrypt, blobstore, llmproxy, doppelganger, agentsensor (library), fleet-dev.
-- `tacplus fleet build` in fleet-dev resolves 11 services + the agentsensor library from those repos; `tacplus build --src
-  build/proto` in kernel generates clean, with minter.Minter and the sys ServiceHealth generated for kernel to host.
+  stratum, eventbus, kmaker, oauth, letsencrypt, blobstore, operator, messaging, mailbox, llmproxy, doppelganger, fleet-dev.
+  Boneyard (Jody): saml, sentinel (returns as Admiral), argus, timedb, graphdb, llmsettings, vanilla, personalauth, agentsensor.
+- `tacplus fleet build` in fleet-dev resolves 11 services from those repos (no libraries: the agentsensor reference was a
+  mistake and is gone from gateway); `tacplus build --src build/proto` in kernel generates clean, with minter.Minter and the
+  sys ServiceHealth generated for kernel to host.
 - Not done: kernel's Java implementing minter.Minter; gateway/operator generation; images; the small cluster; doppelganger's
   own surface (C2D -> fleet service with caller token) and its llmproxy client; cross-test fixtures; proto layout flattening;
   `kind:` consistency checks. The private platform's pushed state is 2026-08-29; everything newer is local.
