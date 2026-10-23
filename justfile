@@ -2,7 +2,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 default: build
 
-# Regenerate the tacplus Go model (./model, git-ignored) from ./proto.
+# Regenerate the tacplus Go model (./tacplus, git-ignored) from ./proto.
 tacplus:
     tacplus build --tag latest
 

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	c2dm "gitlab.com/seabeam/tools/doppelganger/model/c2dm"
-	sm "gitlab.com/seabeam/tools/doppelganger/model/s2sm"
-	pb "gitlab.com/seabeam/tools/doppelganger/model/types/services/doppelganger"
+	c2dm "github.com/tacplus-dev/doppelganger/tacplus/c2dm"
+	sm "github.com/tacplus-dev/doppelganger/tacplus/s2sm"
+	pb "github.com/tacplus-dev/doppelganger/tacplus/types/services/doppelganger"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

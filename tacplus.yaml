@@ -1,6 +1,8 @@
 language: go
-pkg: com.gitlab.seabeam.tools.doppelganger
 src: proto
-output-dir: model
+# pkg is derived from go.mod (the org name has a hyphen, which pkg cannot carry).
+# A derived Go package is <module>/tacplus, so the output segment must be "tacplus".
+output-dir: tacplus
+output-name: tacplus
 header: |
   Copyright (c) 2026 Seabeam LLC. All rights reserved.

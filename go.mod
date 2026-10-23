@@ -1,4 +1,4 @@
-module gitlab.com/seabeam/tools/doppelganger
+module github.com/tacplus-dev/doppelganger
 
 go 1.26.0
 

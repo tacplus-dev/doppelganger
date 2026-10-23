@@ -9,7 +9,7 @@ to answer. Design and rules: `~/workspace/jody/agents.md`, "An agent that repres
   `/tmp/doppelganger.sock`. The socket is 0600; filesystem permissions are the boundary.
 - A CLI that prints **JSON only**. It is for agents we do not write (claude, codex). Tools we
   write (sideband) call the C2D API with the tacplus-generated client
-  (`model/c2dm`).
+  (`tacplus/c2dm`).
 - Sessions: `session create` returns a `session_id`. Context can be given at creation or later
   with `session update`. Caller context is on the honor system for now. State is one JSON file
   per session in `~/.doppelganger/sessions/`. Stale-session cleanup is not implemented yet.
@@ -35,7 +35,7 @@ doppelganger ask "$S" "Rewrite or fix?"
 ## Build
 
 ```sh
-just tacplus   # tacplus (go) → ./model  (git-ignored; run after proto changes)
+just tacplus   # tacplus (go) → ./tacplus  (git-ignored; run after proto changes)
 just build
 just test
 ```
@@ -43,7 +43,7 @@ just test
 ## Notes
 
 - The daemon is hosted by the tacplus-generated standalone C2D host (`sm.ServeC2DStandalone` in
-  `model/s2sm`): the generated Unix-socket server and wrappers (validation, 0600 socket, no token
+  `tacplus/s2sm`): the generated Unix-socket server and wrappers (validation, 0600 socket, no token
   auth) with no cluster behind it. `internal/daemon/server.go` is only the handler.
 - The socket path is declared once, in the proto; the daemon and the CLI use the generated
   `sm.C2DSocketPath`.

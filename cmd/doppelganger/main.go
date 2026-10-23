@@ -22,11 +22,11 @@ import (
 	"syscall"
 	"time"
 
-	"gitlab.com/seabeam/tools/doppelganger/internal/daemon"
-	c2dm "gitlab.com/seabeam/tools/doppelganger/model/c2dm"
-	gc "gitlab.com/seabeam/tools/doppelganger/model/c2dm/grpc/clients/services/doppelganger"
-	sm "gitlab.com/seabeam/tools/doppelganger/model/s2sm"
-	pb "gitlab.com/seabeam/tools/doppelganger/model/types/services/doppelganger"
+	"github.com/tacplus-dev/doppelganger/internal/daemon"
+	c2dm "github.com/tacplus-dev/doppelganger/tacplus/c2dm"
+	gc "github.com/tacplus-dev/doppelganger/tacplus/c2dm/grpc/clients/services/doppelganger"
+	sm "github.com/tacplus-dev/doppelganger/tacplus/s2sm"
+	pb "github.com/tacplus-dev/doppelganger/tacplus/types/services/doppelganger"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )

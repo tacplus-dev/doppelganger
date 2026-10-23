@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 
-	"gitlab.com/seabeam/tools/doppelganger/model/chassis/servicemanager"
-	sm "gitlab.com/seabeam/tools/doppelganger/model/s2sm"
-	fe "gitlab.com/seabeam/tools/doppelganger/model/s2sm/grpc/servers/services/doppelganger"
-	pb "gitlab.com/seabeam/tools/doppelganger/model/types/services/doppelganger"
+	"github.com/tacplus-dev/doppelganger/tacplus/chassis/servicemanager"
+	sm "github.com/tacplus-dev/doppelganger/tacplus/s2sm"
+	fe "github.com/tacplus-dev/doppelganger/tacplus/s2sm/grpc/servers/services/doppelganger"
+	pb "github.com/tacplus-dev/doppelganger/tacplus/types/services/doppelganger"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
