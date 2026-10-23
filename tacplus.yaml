@@ -5,4 +5,5 @@ src: proto
 output-dir: tacplus
 output-name: tacplus
 header: |
-  Copyright (c) 2026 Seabeam LLC. All rights reserved.
+  Copyright (c) 2026 Jody Scott
+  SPDX-License-Identifier: Apache-2.0
