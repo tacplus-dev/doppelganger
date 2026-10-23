@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -9,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -44,24 +42,19 @@ const answerSchema = `{
   "required": ["kind", "answer", "reasoning", "would_change_mind", "provenance", "sources", "missing"]
 }`
 
-// Engine forms answers by running the claude CLI headless with no tools. The
-// whole jody repo goes into the prompt, and the model can read nothing else.
+// Engine forms answers through a Provider with no tools. The whole jody repo
+// goes into the prompt, and the model can read nothing else.
 type Engine struct {
-	RepoDir   string
-	ClaudeBin string
-	Model     string // empty = the CLI's default
+	RepoDir  string
+	Provider Provider
 }
 
-// maxAttempts bounds the claude calls for one answer. An attempt is retried
-// when claude cannot produce valid structured output, or when the answer puts
+// maxAttempts bounds the model calls for one answer. An attempt is retried
+// when the model cannot produce valid structured output, or when the answer puts
 // words in Jody's mouth. If the last attempt still misquotes him, the quotation
 // marks are stripped from the unmatched text (see stripQuotes), so the content
 // survives but is no longer presented as his words.
 const maxAttempts = 3
-
-// errStructuredOutput marks claude giving up on the JSON schema, which is
-// transient: the same input usually succeeds on the next call.
-var errStructuredOutput = errors.New("claude could not produce structured output")
 
 func (e *Engine) Answer(ctx context.Context, sess *Session, question string) (Answer, error) {
 	repo, err := loadRepo(e.RepoDir)
@@ -69,11 +62,10 @@ func (e *Engine) Answer(ctx context.Context, sess *Session, question string) (An
 		return Answer{}, err
 	}
 	marked := markedQuotes(repo)
-	// The repo goes on stdin, not argv: it is too large for a command-line argument.
-	input := "# Repository\n\n" + repo + renderTurn(sess, question)
+	req := Request{System: systemPrompt, Repo: repo, Turn: renderTurn(sess, question), Schema: answerSchema}
 	var last error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		a, err := e.run(ctx, input)
+		a, err := e.run(ctx, req)
 		if errors.Is(err, errStructuredOutput) {
 			last = err
 			continue
@@ -88,54 +80,19 @@ func (e *Engine) Answer(ctx context.Context, sess *Session, question string) (An
 		if attempt == maxAttempts {
 			return stripQuotes(a, bad), nil
 		}
-		input += renderQuoteRejection(bad)
+		req.Turn += renderQuoteRejection(bad)
 	}
 	return Answer{}, fmt.Errorf("no acceptable answer after %d attempts: %w", maxAttempts, last)
 }
 
-// run makes one claude call and decodes the structured answer.
-func (e *Engine) run(ctx context.Context, input string) (Answer, error) {
-	args := []string{
-		"-p",
-		"--output-format", "json",
-		"--tools", "",
-		"--json-schema", answerSchema,
-		"--system-prompt", systemPrompt,
-	}
-	if e.Model != "" {
-		args = append(args, "--model", e.Model)
-	}
-	cmd := exec.CommandContext(ctx, e.ClaudeBin, args...)
-	cmd.Stdin = strings.NewReader(input)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
-	var out struct {
-		IsError          bool            `json:"is_error"`
-		Subtype          string          `json:"subtype"`
-		TerminalReason   string          `json:"terminal_reason"`
-		Result           string          `json:"result"`
-		StructuredOutput json.RawMessage `json:"structured_output"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		if runErr != nil {
-			return Answer{}, fmt.Errorf("claude: %w: stderr=%q stdout=%q", runErr, tail(stderr.String()), tail(stdout.String()))
-		}
-		return Answer{}, fmt.Errorf("decode claude output: %w", err)
-	}
-	if out.Subtype == "error_max_structured_output_retries" {
-		return Answer{}, errStructuredOutput
-	}
-	if runErr != nil {
-		// claude -p reports its own errors as JSON on stdout.
-		return Answer{}, fmt.Errorf("claude: %w: subtype=%q terminal_reason=%q result=%q", runErr, out.Subtype, out.TerminalReason, tail(out.Result))
-	}
-	if out.IsError || len(out.StructuredOutput) == 0 {
-		return Answer{}, fmt.Errorf("claude returned no structured answer: %s", out.Result)
+// run makes one model call and decodes the structured answer.
+func (e *Engine) run(ctx context.Context, req Request) (Answer, error) {
+	raw, err := e.Provider.Complete(ctx, req)
+	if err != nil {
+		return Answer{}, err
 	}
 	var a Answer
-	if err := json.Unmarshal(out.StructuredOutput, &a); err != nil {
+	if err := json.Unmarshal(raw, &a); err != nil {
 		return Answer{}, fmt.Errorf("decode answer: %w", err)
 	}
 	return a, nil
@@ -210,13 +167,4 @@ func loadRepo(dir string) (string, error) {
 		fmt.Fprintf(&b, "<file path=%q>\n%s\n</file>\n\n", rel, data)
 	}
 	return b.String(), nil
-}
-
-// tail keeps the end of a process's output for an error message.
-func tail(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) > 2000 {
-		return "…" + s[len(s)-2000:]
-	}
-	return s
 }

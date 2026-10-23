@@ -62,7 +62,7 @@ else
 fi
 `)
 	chmod(t, fake)
-	e := &Engine{RepoDir: dir + "/repo", ClaudeBin: fake}
+	e := &Engine{RepoDir: dir + "/repo", Provider: &ClaudeCLI{Bin: fake}}
 	a, err := e.Answer(t.Context(), &Session{}, "education?")
 	if err != nil || a.Answer != "Omit education." {
 		t.Fatalf("answer = %q, err = %v", a.Answer, err)
@@ -80,7 +80,7 @@ cat >/dev/null
 echo '{"structured_output":{"kind":"ANSWER","answer":"He said \"Leave education off outward material, and never claim a degree.\" and \"better to just keep it SE.\"","reasoning":"","would_change_mind":"","provenance":"QUOTED","sources":[],"missing":[]}}'
 `)
 	chmod(t, fake)
-	e := &Engine{RepoDir: dir + "/repo", ClaudeBin: fake}
+	e := &Engine{RepoDir: dir + "/repo", Provider: &ClaudeCLI{Bin: fake}}
 	a, err := e.Answer(t.Context(), &Session{}, "education?")
 	if err != nil {
 		t.Fatal(err)
@@ -101,9 +101,9 @@ func chmod(t *testing.T, p string) {
 	}
 }
 
-// TestEngineRetriesStructuredOutputFailure: claude giving up on the schema is
+// TestClaudeCLIRetriesStructuredOutputFailure: claude giving up on the schema is
 // retried, not surfaced.
-func TestEngineRetriesStructuredOutputFailure(t *testing.T) {
+func TestClaudeCLIRetriesStructuredOutputFailure(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir+"/repo/life.md", quoteRepo)
 	fake := dir + "/claude"
@@ -118,7 +118,7 @@ else
 fi
 `)
 	chmod(t, fake)
-	e := &Engine{RepoDir: dir + "/repo", ClaudeBin: fake}
+	e := &Engine{RepoDir: dir + "/repo", Provider: &ClaudeCLI{Bin: fake}}
 	if a, err := e.Answer(t.Context(), &Session{}, "q"); err != nil || a.Answer != "ok" {
 		t.Fatalf("answer = %q, err = %v", a.Answer, err)
 	}

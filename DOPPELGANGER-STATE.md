@@ -31,7 +31,13 @@ his words).
   `pkg/internal/go/types/handler_gen.go`, commit cb02690 "c2d: generated standalone host"), NOT in the GitLab
   schematic tacplus. `just tacplus` must run with that tacplus. Then 254e2f5/002d704 added the
   `header:` (Seabeam LLC) to `tacplus.yaml`. `model/` is git-ignored generated output.
-- **Engine still shells out to `claude -p`** (`engine.go:108`, `ClaudeBin`). That is the next thing to change.
+- **Provider seam (branch `engine-provider`, 2026-10-23):** `internal/daemon/provider.go` defines `Provider.Complete(ctx, Request)`;
+  the engine owns prompt, retries and quote enforcement above it. Providers: `provider_anthropic.go` (Messages API via the
+  official Go SDK, repo in a cached system block, structured outputs from `answerSchema`, default `claude-opus-5-5`, effort high,
+  key from `~/.doppelganger/anthropic.key` which must be mode 0600) and `provider_claude.go` (the old `claude -p` path, interim).
+  Daemon flag `--provider anthropic|claude`, default anthropic; the installed plist pins `--provider claude` until a key exists.
+  Offline tests cover the engine loop against a scripted provider and the Anthropic request shape against an httptest server.
+  NOT yet run live against the API (no key on this machine yet).
 
 ## Decisions that STAND for doppelganger (2026-10-09 → 10-14, Jody)
 1. **Self-sufficient engine.** No external programs. Call model APIs directly: Anthropic (via API), OpenAI, Gemini,
@@ -79,7 +85,9 @@ his words).
   it belongs to whatever the auth sessions decided, not to doppelganger.
 
 ## Open / not yet done (doppelganger-only)
-- [ ] Engine: replace `claude -p` with direct provider calls (item 1). Remove `--claude` from the plist afterwards.
+- [x] Engine: provider seam + Anthropic adapter built and unit-tested (branch `engine-provider`).
+- [ ] Engine: create a new Anthropic API key (Jody), drop it in `~/.doppelganger/anthropic.key` (0600), run live, then switch the
+      plist to `--provider anthropic` and delete `provider_claude.go` and `--claude`. OpenAI/Grok/Gemini adapters after that.
 - [ ] Round table + chair triage + `reconsider` (items 2–3). Proto change: new rpc + Answer fields for member
       positions / precedent reference.
 - [ ] Recorded answers store + staleness check + MR creation into secondstar/jody (items 4–5). Needs a
@@ -98,3 +106,10 @@ his words).
 - Identity design doc (historical now): https://claude.ai/code/artifact/cf57d392-7fc0-4820-946d-fd2e3f585562
 - Biscuit spec study: https://claude.ai/code/artifact/a1206ebc-c1d5-40d5-8b46-b08429ed68f4
 - Suggested task chip "Close tacplus REST dispatch parity gap" (task_3381e09d) — tacplus, not doppelganger.
+
+## Direction noted 2026-10-23 (Jody, not yet acted on)
+Doppelganger must deploy as a service on any fleet/cluster, optional per cluster, likely from an
+open-source home. Today "part of the fleet" means "in schematic's type tree", which doppelganger
+should not be. The fix is tacplus composition: declare which types/services a deployment loads and
+build the kernel from that set. Not built yet; being discussed on the tacplus side. Today's goal:
+finish the open items above, then size the tacplus work so it does not disturb the 2026-12-01 launch.

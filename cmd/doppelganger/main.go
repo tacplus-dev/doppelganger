@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -77,10 +78,25 @@ func runDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	repo := fs.String("repo", filepath.Join(home, "workspace", "jody"), "jody context repo")
 	stateDir := fs.String("state-dir", filepath.Join(home, ".doppelganger", "sessions"), "session state directory")
-	claudeBin := fs.String("claude", "claude", "claude CLI binary")
-	model := fs.String("model", "", "model for answers (default: the claude CLI default)")
+	providerName := fs.String("provider", "anthropic", "model provider: anthropic | claude (the claude CLI, interim)")
+	model := fs.String("model", "", "model for answers (default: the provider's default)")
+	keyFile := fs.String("anthropic-key-file", filepath.Join(home, ".doppelganger", "anthropic.key"), "file holding the Anthropic API key (mode 0600)")
+	claudeBin := fs.String("claude", "claude", "claude CLI binary (provider=claude)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	var provider daemon.Provider
+	switch *providerName {
+	case "anthropic":
+		key, err := readKeyFile(*keyFile)
+		if err != nil {
+			return err
+		}
+		provider = daemon.NewAnthropic(key, *model)
+	case "claude":
+		provider = &daemon.ClaudeCLI{Bin: *claudeBin, Model: *model}
+	default:
+		return fmt.Errorf("unknown provider %q", *providerName)
 	}
 	sessions, err := daemon.NewSessionStore(*stateDir)
 	if err != nil {
@@ -90,8 +106,29 @@ func runDaemon(args []string) error {
 	defer stop()
 	return sm.ServeC2DStandalone(ctx, sm.C2DSocketPath, &daemon.Server{
 		Sessions: sessions,
-		Engine:   &daemon.Engine{RepoDir: *repo, ClaudeBin: *claudeBin, Model: *model},
+		Engine:   &daemon.Engine{RepoDir: *repo, Provider: provider},
 	})
+}
+
+// readKeyFile reads an API key from a file that only the owner may read. The
+// mode is checked, not documented: a key readable by others is refused.
+func readKeyFile(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("api key: %w", err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("api key %s has mode %04o; must be 0600", path, info.Mode().Perm())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("api key: %w", err)
+	}
+	key := strings.TrimSpace(string(data))
+	if key == "" {
+		return "", fmt.Errorf("api key %s is empty", path)
+	}
+	return key, nil
 }
 
 func sessionCreate(args []string) error {

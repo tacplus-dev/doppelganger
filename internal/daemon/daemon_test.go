@@ -116,7 +116,7 @@ echo '{"is_error":false,"result":"","structured_output":{"kind":"ANSWER","answer
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- sm.ServeC2DStandalone(ctx, socketPath, &Server{Sessions: store, Engine: &Engine{RepoDir: repo, ClaudeBin: fake}})
+		serveErr <- sm.ServeC2DStandalone(ctx, socketPath, &Server{Sessions: store, Engine: &Engine{RepoDir: repo, Provider: &ClaudeCLI{Bin: fake}}})
 	}()
 
 	dialCtx, dialCancel := context.WithTimeout(ctx, 5*time.Second)
