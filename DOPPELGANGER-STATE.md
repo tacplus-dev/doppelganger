@@ -107,6 +107,16 @@ his words).
 - Biscuit spec study: https://claude.ai/code/artifact/a1206ebc-c1d5-40d5-8b46-b08429ed68f4
 - Suggested task chip "Close tacplus REST dispatch parity gap" (task_3381e09d) — tacplus, not doppelganger.
 
+## Plan agreed 2026-10-23 (Jody: "Yes on all")
+1. Registry repo under github/tacplus-dev (local seed DONE at ~/workspace/github/tacplus-dev/registry, commit 3ec47b3, no remote yet;
+   doppelganger registered as id 101). 2. tacplus branch `registry-and-floor` in ~/workspace/github/seabeam/tacplus (DONE locally:
+   global registry + locks + `tacplus registry register`, `tacplus:` MAJOR.MINOR floor in tacplus.yaml; ids 101-2047 new range).
+   3. Doppelganger repo moves to github/tacplus-dev/doppelganger (NOT done; header entity Seabeam LLC vs Jody Scott to settle first).
+   4. Build + test (engine seam DONE on branch `engine-provider`; live trials need the API key). 5. Kernel Rust rewrite, Hazelcast out
+   of kernel (stays in Stratum) — own track, merges after 2026-12-01 launch. 6. Merge back. Test deploy: a SMALL SEPARATE CLUSTER from
+   the branch (a namespace on the launch cluster would still change its kernel). `proto/registry.yaml` is now a lock; its `global:` is a
+   local path until the registry repo has a remote.
+
 ## Direction noted 2026-10-23 (Jody, not yet acted on)
 Doppelganger must deploy as a service on any fleet/cluster, optional per cluster, likely from an
 open-source home. Today "part of the fleet" means "in schematic's type tree", which doppelganger
