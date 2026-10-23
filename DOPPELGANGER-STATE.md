@@ -125,3 +125,16 @@ open-source home. Today "part of the fleet" means "in schematic's type tree", wh
 should not be. The fix is tacplus composition: declare which types/services a deployment loads and
 build the kernel from that set. Not built yet; being discussed on the tacplus side. Today's goal:
 finish the open items above, then size the tacplus work so it does not disturb the 2026-12-01 launch.
+
+## Corrections 2026-10-23 (Jody, afternoon)
+- Doppelganger does NOT run locally. Fleet service only. Locally: a client that signs in, gets a platform token, calls it.
+  The launchd daemon on the Mac is a leftover. The C2D surface will be replaced by a client-facing one with a caller token.
+- Model calls go through **llmproxy** (S2S). llmproxy holds the federated identity to Anthropic. No API keys anywhere.
+  The Anthropic SDK provider was removed; `ClaudeCLI` stays as the stand-in behind the `Provider` seam until the generated
+  llmproxy client replaces it. llmproxy was copied wholesale to github.com/tacplus-dev/llmproxy (private; README has the
+  divergence rule). Registry: llmproxy id 75 now maps to that repo.
+- Composition: the kernel build follows dependencies (manifest -> doppelganger -> llmproxy), never the reverse. Generating
+  llmproxy alone fails on the "kernel" state label today; that is the first thing composition must fix (roadmap item
+  tacplus-registry-and-floor).
+- ~/workspace/github/tacplus-dev/tacplus was deleted then RESTORED (checked out at 699cbe4): sonar/backend/build.sh pins
+  TACPLUS_REPO to that path and sha. Conflicts with "no code on disk unless working" — Jody to decide.
