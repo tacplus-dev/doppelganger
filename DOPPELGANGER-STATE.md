@@ -399,3 +399,13 @@ finish the open items above, then size the tacplus work so it does not disturb t
   Anthropic console: issuer (discovery, no CA), service account, rule (sub prefix
   spiffe://local.dev/system/services/llmproxy, aud https://api.anthropic.com, scope workspace:inference) → the ids
   go into services/llmproxy.yaml. llmproxy's delegate already carries external_audiences [https://api.anthropic.com].
+- 2026-10-24 ~21:15Z: **Federation works.** Console (via Chrome, Jody's session): issuer `seatrials`
+  fdis_01JKxG3CyMXqfgcG8HoqorvT (https://seatrials.tacplus.dev, discovery, no CA, jti single-use), service account
+  `llmproxy-seatrials` svac_01EoVk8wqp7sVYgBkRyyd5MT (developer, Default workspace), rule `llmproxy-seatrials`
+  fdrl_01Fvxu1oSKHN6rwtdZmRbGY8 (sub spiffe://local.dev/system/services/llmproxy, aud https://api.anthropic.com,
+  scope workspace:developer — the console offered only developer/org:admin — 10-min tokens). Org
+  deec78e0-a50d-4817-89e4-043b3d94a5a0, workspace wrkspc_017AfVbSBgLY399kXGDRtQ6e; all four in services/llmproxy.yaml
+  (ids, not secrets). Authentication events show Success; credits moved, so Anthropic generated a reply. The reply
+  failed llmproxy's parser: "no text or tool_use block in content" — block type unknown to it. llmproxy 34fa79c now
+  names the stop_reason and block types in that error. doppelganger 4faf7c0: context reads see this instance's own
+  push before stratum has the rows (same write-through cache as sessions; beta's push-then-ask read "no context").
