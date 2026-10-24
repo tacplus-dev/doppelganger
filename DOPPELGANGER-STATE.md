@@ -270,3 +270,12 @@ finish the open items above, then size the tacplus work so it does not disturb t
   (doppelganger needed /var/lib/doppelganger owned by its user in the image). Java (kernel ok; stratum, eventbus) also
   pinned TLS identity "servicehealth" when dialing kernel's state store → fixed in tacplus 89f3393 (Java service manager
   uses the health root's host label); Java images rebuilding.
+- 2026-10-24 ~07:15Z: 10/11 pods 1/1 (stratum waiting on its 2-writer floor; set stratum_nodes: 2). The LOCAL CLIENT
+  exists: fleet-seatrials/client (`seatrials`, a tacplus `kind: client` project generated against build/proto; registry
+  id 104). Auth path = cred_pair: keygen → public JWK into operator.yaml root_cred_pairs (root) or a tenant's
+  kernel.cred_pairs; login signs a proof (kid = pair id, aud kernel, jti, namespace) → kernel.Mint/MintClientToken through
+  the gateway (self-authenticating) → token. **Root login works** (subject cred-pair:…, namespace "/"). Found: kernel's
+  cred_pair tokens carried no `principal` claim, so kernel's own authenticator refused them on TenantAdmin ("token
+  missing caller identity"); fixed in kernel (setPrincipal), image rebuilding. Next: tenant create/cred alpha+beta,
+  login as each, ping (served_by must name the caller's tenant), ask (doppelganger → llmproxy; federation ids still
+  needed from Jody for the model call itself).
