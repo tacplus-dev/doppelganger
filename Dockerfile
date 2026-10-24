@@ -12,7 +12,10 @@ LABEL org.opencontainers.image.title="doppelganger" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.source="https://github.com/tacplus-dev/doppelganger"
-RUN apk add --no-cache ca-certificates && adduser -D -u 65532 app
+RUN apk add --no-cache ca-certificates && adduser -D -u 65532 app \
+    && mkdir -p /var/lib/doppelganger && chown 65532:65532 /var/lib/doppelganger
+# /var/lib/doppelganger holds repo_dir and state_dir (see Config). Without a
+# volume mounted there it is ephemeral; the deployment decides what backs it.
 COPY bin/doppelganger /usr/local/bin/doppelganger
 USER 65532
 # Every service runs under the launcher (github.com/tacplus-dev/launcher): PID 1
