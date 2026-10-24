@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -43,11 +44,24 @@ type ContextStore struct {
 	records contextRecords
 	publish func(context.Context, *pb.ContextDocument) error
 	now     func() time.Time
+
+	// recent is the write-through cache of this instance's own replacements,
+	// keyed by context, for recentTTL: a caller who pushes and asks in the
+	// next call must not read the store before stratum has the rows.
+	mu     sync.Mutex
+	recent map[string]recentContext
+}
+
+type recentContext struct {
+	docs    []*pb.ContextDocument
+	expires time.Time
 }
 
 func NewContextStore(records contextRecords, publish func(context.Context, *pb.ContextDocument) error) *ContextStore {
-	return &ContextStore{records: records, publish: publish, now: time.Now}
+	return &ContextStore{records: records, publish: publish, now: time.Now, recent: map[string]recentContext{}}
 }
+
+func contextKey(tenant, scope, owner string) string { return tenant + "\x00" + scope + "\x00" + owner }
 
 var errBadContextPath = errors.New("context file path must be relative, clean and inside the context")
 
@@ -67,6 +81,7 @@ func (c *ContextStore) Replace(ctx context.Context, tenant, scope, owner string,
 	kept := map[string]bool{}
 	now := c.now().UnixMilli()
 	var bytes int64
+	var published []*pb.ContextDocument
 	for _, f := range files {
 		kept[f.GetPath()] = true
 		doc := &pb.ContextDocument{
@@ -81,8 +96,12 @@ func (c *ContextStore) Replace(ctx context.Context, tenant, scope, owner string,
 		if err := c.publish(ctx, doc); err != nil {
 			return 0, 0, fmt.Errorf("publishing context document %q: %w", f.GetPath(), err)
 		}
+		published = append(published, doc)
 		bytes += int64(len(f.GetContent()))
 	}
+	c.mu.Lock()
+	c.recent[contextKey(tenant, scope, owner)] = recentContext{docs: published, expires: c.now().Add(recentTTL)}
+	c.mu.Unlock()
 	for _, old := range existing {
 		if kept[old.GetPath()] {
 			continue
@@ -134,9 +153,22 @@ func (c *ContextStore) Load(ctx context.Context, tenant, user string) (string, e
 	return b.String(), nil
 }
 
-// list reads one context's live rows: a point query on (tenant, scope, owner),
-// paged through, and closed.
+// list reads one context's live rows: this instance's recent replacement if
+// it made one, else a point query on (tenant, scope, owner), paged through,
+// and closed.
 func (c *ContextStore) list(ctx context.Context, tenant, scope, owner string) ([]*pb.ContextDocument, error) {
+	c.mu.Lock()
+	now := c.now()
+	for k, r := range c.recent {
+		if !now.Before(r.expires) {
+			delete(c.recent, k)
+		}
+	}
+	if r, ok := c.recent[contextKey(tenant, scope, owner)]; ok {
+		c.mu.Unlock()
+		return r.docs, nil
+	}
+	c.mu.Unlock()
 	handle, err := c.records.CreateContextDocumentQuery(ctx, &query_pb.OpenContextDocumentQueryRequest{
 		Filter: &query_pb.ContextDocumentFilter{TenantNamespace: &tenant, Scope: &scope, Owner: &owner},
 	})

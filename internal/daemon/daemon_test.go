@@ -140,6 +140,16 @@ func TestContextStoreReplaceAndLoad(t *testing.T) {
 	if strings.Contains(got, "tenant tone") || !strings.Contains(got, "new tone") {
 		t.Fatalf("Replace must replace whole: %q", got)
 	}
+	// A replacement is readable at once, before stratum has the rows: a store
+	// whose publish lands nowhere still answers Load from the instance's own
+	// recent replacement, and a second instance (no cache) sees the store.
+	lagging := NewContextStore(newFakeRecords(), func(context.Context, *pb.ContextDocument) error { return nil })
+	if _, _, err := lagging.Replace(ctx, acme, scopeUser, "carol", []*pb.ContextFile{{Path: "me.md", Content: []byte("carol is quick")}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := lagging.Load(ctx, acme, "carol"); err != nil || !strings.Contains(got, "carol is quick") {
+		t.Fatalf("Load right after Replace = %q, %v; want the just-pushed context", got, err)
+	}
 	// Nothing anywhere is a refusal, not an empty prompt.
 	if _, err := c.Load(ctx, acme, "nobody"); err == nil || !strings.Contains(err.Error(), "the tenant has none") {
 		// acme has tenant rows, so use a tenant with none.
