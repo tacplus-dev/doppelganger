@@ -357,3 +357,19 @@ finish the open items above, then size the tacplus work so it does not disturb t
   no volume, so uploaded context does not survive a restart until it lives in stratum; re-push after a rollout.
   ALL 14 PODS 1/1. Waiting on Jody: the four Anthropic federation ids (services/llmproxy.yaml), and whether
   llmproxy's alias table should move off claude-sonnet-4-5.
+- 2026-10-24 ~18:40Z (Jody): "The config should be held in kernel state. The tenant/user config in stratum. we should
+  go ahead and port stratum now." Clarified: services/<svc>.yaml in the fleet repo is only the SOURCE of a service's
+  typed Config; the operator renders it into the kernel bundle and kernel serves it as config state (so it already is
+  kernel state; a bundle change needs a kernel restart, only overrides are live). Stratum is already a fleet service
+  (3 nodes), so "port" = move doppelganger's context onto the tacplus record plane with stratum as the store:
+  doppelganger a172d21 declares `ContextDocument` as a (spec.record) (key document_id = digest of tenant/scope/owner/
+  path, owner, store_namespace = tenant_namespace, scope "tenant"|"user", (spec.deleted_flag) deleted, residency 90d
+  idle / 30d deleted), s2s producer + s2s_read doppelganger, s2s_subscribe stratum, file-level (spec.record_read),
+  Config publishes on `doppelganger.ContextDocumentBus.stream`; repo_dir is gone. Writing = publishing (stratum stores
+  on its subscription); a replacement republishes every file and publishes the dropped rows deleted; reading = the
+  record query plane (CreateContextDocumentQuery → ListContextDocument → Delete). Same shape as letsencrypt's cert
+  record. Sessions (state_dir) are the next thing to move. llmproxy 8f342f7: Config.models (alias, provider_model,
+  prices) replaces the in-code alias table and LP4(b)'s in-code pricing — the model changes by config push. Lesson:
+  the KERNEL carries every service's typed Config, so a Config field change needs a kernel image rebuild (bundle
+  fields the kernel's types do not know are dropped on parse) — same class as the gateway/proto rule. Images for
+  kernel, stratum (new subscription), eventbus (new topic), doppelganger building; operator rebuild + apply next.
