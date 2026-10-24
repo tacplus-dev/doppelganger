@@ -380,3 +380,12 @@ finish the open items above, then size the tacplus work so it does not disturb t
   federation ids). Beta's instance still has no context. llmproxy resolves `claude-sonnet` from Config.models now
   that the kernel's types know the field. Waiting on Jody: the four federation ids (see 17:05Z entry and the recap);
   next move: sessions (state_dir) into stratum the same way, then nothing is on any instance's disk.
+- 2026-10-24 ~19:40Z: **SESSIONS ARE IN STRATUM TOO; NOTHING IS ON ANY DOPPELGANGER DISK.** doppelganger 5a27bbd/256a44f:
+  `Session` record (key session_id, owner, store_namespace tenant_namespace, context, turns as SessionTurn{question,
+  GenerateAnswerResponse}, deleted_flag, 30d/30d residency), published on `doppelganger.SessionBus.stream`, read by
+  point query on the key; a write-through cache (10 min) of this instance's own publishes covers the open-then-ask
+  gap before stratum has stored the row. state_dir gone from Config. Proof: `ask` opened session 27fb416e…, then
+  `rollout restart deploy/doppelganger-alpha0`, then `ask --session 27fb416e…` on the NEW pod continued it (reached
+  llmproxy → Anthropic 401), while a made-up id is NotFound. Context likewise survived the rollout with no re-push.
+  Kernel, stratum, eventbus, doppelganger rebuilt; operator re-applied; 14/14 pods 1/1. Client: `ask --session ID`.
+  personalauth is boneyard (Jody) — not in the port list. Still waiting on the four Anthropic federation ids.
