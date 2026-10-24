@@ -316,3 +316,10 @@ finish the open items above, then size the tacplus work so it does not disturb t
   tenant, which is exactly what the proof must distinguish). Open question for Jody: the gateway's generic SPIFFE
   endpoint index (`extract_spiffe_service_path`, org/cluster/service split) predates the current identity shape and
   yields "alpha/services/tenantecho"; unused by routing today, left as is.
+- 2026-10-24 ~08:25Z: **TWO-TENANT PROOF PASSES.** Through the gateway at 146.148.80.132, `seatrials ping --as alpha`
+  answers `served_by: spiffe://local.dev/tenants/alpha/services/tenantecho, caller_namespace: /tenants/alpha`; beta
+  answers from `/tenants/beta/services/tenantecho`; root (namespace "/") is refused by the gateway as not tenant-scoped.
+  The gateway's health index now carries `tenantecho-alpha` and `tenantecho-beta` as route keys. All 13 pods 1/1
+  (stratum cold-started). `ask --as alpha` reaches doppelganger (per-service token accepted) and fails cleanly on the
+  context repo: `/var/lib/doppelganger/repo: no such file or directory` — the open fleet-layer question of how the
+  context repo is populated (git-sync?) plus llmproxy's federation ids, both Jody's call.
