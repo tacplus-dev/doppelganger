@@ -12,11 +12,13 @@ to answer. Design and rules: `~/workspace/jody/agents.md`, "An agent that repres
 - The model is reached through **llmproxy** over S2S with doppelganger's own identity
   (`depends: [llmproxy]`, `(spec.grpc_s2s_client)`); the fleet build admits doppelganger as a
   caller. Doppelganger holds no model credential.
-- Config (`repo_dir`, `state_dir`, `model_alias`) comes from the fleet's config state, delivered
-  by the service manager at start and on change. Context is two layers under `repo_dir`, both
-  written only through the service: the tenant's shared context (`UpdateTenantContext`, gated by
-  that RPC's grant) and each user's own (`UpdateContext`, any user, their own files). Answers
-  rest on both. It lives on the instance's disk until stratum is ported, when it moves there.
+- Config (`state_dir`, `model_alias`) comes from the fleet's config state, delivered by the
+  service manager at start and on change. Context is two layers of `ContextDocument` records in
+  **stratum**, both written only through the service: the tenant's shared context
+  (`UpdateTenantContext`, gated by that RPC's grant) and each user's own (`UpdateContext`, any
+  user, their own files). Writing is publishing the record onto its topic (stratum stores it);
+  reading is the generated record query plane. Answers rest on both; nothing is on the instance's
+  disk. Sessions (`state_dir`) are next to move.
 - Sessions belong to the user who opened them; another user of the tenant cannot read or
   extend one.
 - Sessions: a caller opens one with context (who they are, who the answer is for, what it is

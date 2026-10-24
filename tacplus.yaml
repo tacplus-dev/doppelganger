@@ -4,6 +4,10 @@ src: proto
 # the model is reached through llmproxy (S2S); its contract comes through the registry.
 depends:
   - llmproxy
+  # ContextDocument publishes through the eventbus broker and is stored by
+  # stratum, whose record query plane this service reads its rows back from.
+  - eventbus
+  - stratum
 # pkg is derived from go.mod (the org name has a hyphen, which pkg cannot carry).
 # A derived Go package is <module>/tacplus, so the output segment must be "tacplus".
 output-dir: tacplus

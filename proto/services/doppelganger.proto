@@ -27,14 +27,27 @@ option (spec.service) = {name: "doppelganger", tenant_owned: true};
 // one of its callers because this line exists.
 option (spec.grpc_s2s_client) = {service: "llmproxy.LlmProxy"};
 
+// Context lives in stratum as ContextDocument records: this service reads its
+// own rows back through the record query plane (the grant half is the record's
+// s2s_read below). Nothing is kept on the instance's disk.
+option (spec.record_read) = {record: "doppelganger.ContextDocument"};
+
 message Config {
   option (spec.grpc_config) = {service_name: "doppelganger"};
 
-  // repo_dir holds the context the answers rest on: tenant/ for the tenant's
-  // shared context and users/<user>/ for each user's own, both written only
-  // through this service's Update*Context RPCs and read on every answer.
-  string repo_dir = 1 [(spec.assert_required) = true];
+  // The topic tacplus synthesizes from ContextDocument's (spec.record): this
+  // service's durable write path. A record has no write RPC; it reaches stratum
+  // on stratum's own subscription to this topic, so publishing here IS writing
+  // the record (the same shape as letsencrypt's LetsEncryptCert).
+  option (spec.event_publish) = {
+    topic_ref: "doppelganger.ContextDocumentBus.stream"
+  };
+
+  // 1 was repo_dir: context on the instance's disk, before it moved to stratum.
+  reserved 1;
+  reserved "repo_dir";
   // state_dir holds session state (context and turns), one file per session.
+  // Sessions are the next thing to move into stratum.
   string state_dir = 2 [(spec.assert_required) = true];
   // model_alias is the llmproxy alias answers are generated with.
   string model_alias = 3 [(spec.assert_required) = true];
@@ -64,6 +77,54 @@ message UpdateSessionResponse {}
 message ContextFile {
   string path    = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 512];
   bytes  content = 2 [(spec.assert_max_size) = 1048576];
+}
+
+// ContextDocument is one stored file of a context, the row behind ContextFile:
+// the tenant's shared context (scope "tenant", owner = the tenant namespace) or
+// one user's own (scope "user", owner = that user's principal). Doppelganger is
+// the only writer and the only reader; stratum stores it. A replacement of a
+// context republishes every file and soft-deletes the rows it no longer has.
+message ContextDocument {
+  option (spec.record) = {
+    // A stable digest of (tenant, scope, owner, path): the same file lands on
+    // the same row, so a re-push is an update, never a second copy.
+    key: "document_id"
+    owner: "owner"
+    s2s: {auth_services: ["doppelganger"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["doppelganger"]}
+    // Context is long-lived, config-shaped data: read on every answer while a
+    // tenant is active, rewritten rarely. Ninety days idle before eviction
+    // (cache maintenance, nothing is lost); deleted rows purged after thirty.
+    residency: {idle_seconds: 7776000 deleted_max_age_seconds: 2592000}
+  };
+
+  string document_id = 1 [
+    (spec.indexed) = true,
+    (spec.assert_required) = true,
+    (spec.assert_min_size) = 1,
+    (spec.assert_max_size) = 128
+  ];
+  // tenant_namespace is the row's owning namespace (/tenants/<t>): the
+  // generated tenant backstop at egress, and the tenant-owned instance's reads
+  // are pinned to its own tenant regardless.
+  string tenant_namespace = 2 [
+    (spec.store_namespace) = true,
+    (spec.assert_required) = true,
+    (spec.assert_max_size) = 512,
+    (spec.query_field) = {op: QUERY_OP_EQ}
+  ];
+  // scope is "tenant" or "user".
+  string scope = 3 [(spec.assert_required) = true, (spec.assert_max_size) = 16, (spec.query_field) = {op: QUERY_OP_EQ}];
+  // owner is the tenant namespace for scope "tenant", the user's principal for
+  // scope "user".
+  string owner = 4 [(spec.assert_required) = true, (spec.assert_max_size) = 512, (spec.query_field) = {op: QUERY_OP_EQ}];
+  // path is the file's context-relative path, as uploaded.
+  string path = 5 [(spec.assert_required) = true, (spec.assert_max_size) = 512];
+  bytes content = 6 [(spec.assert_max_size) = 1048576];
+  int64 updated_at_ms = 7;
+  // deleted marks a file a later replacement no longer carries.
+  bool deleted = 8 [(spec.deleted_flag) = true];
 }
 
 // UpdateContextRequest replaces the calling user's own context, whole: the

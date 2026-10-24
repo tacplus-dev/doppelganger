@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -34,15 +33,15 @@ func answerJSON(answer string) json.RawMessage {
 
 func newEngine(t *testing.T, p Provider) *Engine {
 	t.Helper()
-	c := NewContextStore(filepath.Join(t.TempDir(), "repo"))
-	write(t, filepath.Join(c.TenantDir(), "notes.md"), `Jody said *"I really want stuff that matters."* and the repo recommends recommendations.`)
-	return &Engine{Contexts: c, Provider: p}
+	rec := newFakeRecords()
+	rec.seed(acme, scopeTenant, acme, "notes.md", `Jody said *"I really want stuff that matters."* and the repo recommends recommendations.`)
+	return &Engine{Contexts: NewContextStore(rec, rec.publish), Provider: p}
 }
 
 func TestEngineRequestShape(t *testing.T) {
 	p := &scriptedProvider{replies: []any{answerJSON("ok")}}
 	e := newEngine(t, p)
-	sess := &Session{Context: []string{"audience: Jody"}}
+	sess := &Session{Tenant: acme, Context: []string{"audience: Jody"}}
 	if _, err := e.Answer(context.Background(), sess, "what matters?"); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +57,7 @@ func TestEngineRequestShape(t *testing.T) {
 func TestEngineRetriesStructuredOutputFailure(t *testing.T) {
 	p := &scriptedProvider{replies: []any{errStructuredOutput, answerJSON("second time")}}
 	e := newEngine(t, p)
-	a, err := e.Answer(context.Background(), &Session{}, "q")
+	a, err := e.Answer(context.Background(), &Session{Tenant: acme}, "q")
 	if err != nil || a.Answer != "second time" || len(p.reqs) != 2 {
 		t.Fatalf("a=%+v err=%v calls=%d", a, err, len(p.reqs))
 	}
@@ -70,7 +69,7 @@ func TestEngineRejectsUnmarkedQuoteThenAccepts(t *testing.T) {
 		answerJSON(`Jody said "I really want stuff that matters" so recommend.`),
 	}}
 	e := newEngine(t, p)
-	a, err := e.Answer(context.Background(), &Session{}, "q")
+	a, err := e.Answer(context.Background(), &Session{Tenant: acme}, "q")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +85,7 @@ func TestEngineStripsQuotesOnLastAttempt(t *testing.T) {
 	bad := answerJSON(`He said "we must ship it tomorrow morning" to me.`)
 	p := &scriptedProvider{replies: []any{bad, bad, bad}}
 	e := newEngine(t, p)
-	a, err := e.Answer(context.Background(), &Session{}, "q")
+	a, err := e.Answer(context.Background(), &Session{Tenant: acme}, "q")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +97,7 @@ func TestEngineStripsQuotesOnLastAttempt(t *testing.T) {
 func TestEngineGivesUpAfterMaxStructuredOutputFailures(t *testing.T) {
 	p := &scriptedProvider{}
 	e := newEngine(t, p)
-	if _, err := e.Answer(context.Background(), &Session{}, "q"); err == nil || len(p.reqs) != maxAttempts {
+	if _, err := e.Answer(context.Background(), &Session{Tenant: acme}, "q"); err == nil || len(p.reqs) != maxAttempts {
 		t.Fatalf("err=%v calls=%d", err, len(p.reqs))
 	}
 }

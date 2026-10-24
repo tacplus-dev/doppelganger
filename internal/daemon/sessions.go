@@ -18,7 +18,9 @@ import (
 type Session struct {
 	ID string `json:"id"`
 	// Owner is the user who opened the session; nobody else can read or extend it.
-	Owner     string    `json:"owner"`
+	Owner string `json:"owner"`
+	// Tenant is the namespace the session's context is read from.
+	Tenant    string    `json:"tenant"`
 	CreatedAt time.Time `json:"created_at"`
 	Context   []string  `json:"context"`
 	Turns     []Turn    `json:"turns"`
@@ -47,7 +49,7 @@ func NewSessionStore(dir string) (*SessionStore, error) {
 	return &SessionStore{dir: dir}, nil
 }
 
-func (s *SessionStore) Create(owner string, context []string) (*Session, error) {
+func (s *SessionStore) Create(owner, tenant string, context []string) (*Session, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		return nil, err
@@ -55,6 +57,7 @@ func (s *SessionStore) Create(owner string, context []string) (*Session, error) 
 	sess := &Session{
 		ID:        hex.EncodeToString(buf),
 		Owner:     owner,
+		Tenant:    tenant,
 		CreatedAt: time.Now().UTC(),
 		Context:   append([]string{}, context...),
 		Turns:     []Turn{},

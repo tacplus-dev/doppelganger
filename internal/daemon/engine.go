@@ -6,10 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -58,7 +54,7 @@ type Engine struct {
 const maxAttempts = 3
 
 func (e *Engine) Answer(ctx context.Context, sess *Session, question string) (Answer, error) {
-	repo, err := e.Contexts.Load(sess.Owner)
+	repo, err := e.Contexts.Load(ctx, sess.Tenant, sess.Owner)
 	if err != nil {
 		return Answer{}, err
 	}
@@ -133,40 +129,4 @@ func renderTurn(sess *Session, question string) string {
 	}
 	b.WriteString("\n# Question\n\n" + question + "\n")
 	return b.String()
-}
-
-// loadRepo concatenates every Markdown file under dir and counts them; a dir
-// that does not exist is empty. inbox/ holds material
-// Jody has not reviewed yet, so it is excluded.
-func loadRepo(dir string) (string, int, error) {
-	var paths []string
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() && (d.Name() == ".git" || d.Name() == "inbox") {
-			return filepath.SkipDir
-		}
-		if !d.IsDir() && strings.HasSuffix(p, ".md") {
-			paths = append(paths, p)
-		}
-		return nil
-	})
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", 0, nil
-	}
-	if err != nil {
-		return "", 0, fmt.Errorf("read context: %w", err)
-	}
-	sort.Strings(paths)
-	var b strings.Builder
-	for _, p := range paths {
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return "", 0, err
-		}
-		rel, _ := filepath.Rel(dir, p)
-		fmt.Fprintf(&b, "<file path=%q>\n%s\n</file>\n\n", rel, data)
-	}
-	return b.String(), len(paths), nil
 }

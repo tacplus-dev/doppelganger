@@ -1,10 +1,11 @@
 // Copyright (c) 2026 Jody Scott
 // SPDX-License-Identifier: Apache-2.0
 
-// doppelganger answers questions on Jody's behalf from the jody context repo,
+// doppelganger answers questions as the person a tenant's context describes,
 // as a fleet service: client-facing through the gateway, the model through
-// llmproxy. Configuration (repo_dir, state_dir, model_alias) arrives from the
-// fleet's config state; nothing is read from flags or the environment.
+// llmproxy, the context in stratum. Configuration (state_dir, model_alias)
+// arrives from the fleet's config state; nothing is read from flags or the
+// environment.
 //
 // The local client that authenticates as a user and calls this service through
 // the gateway is a separate program (not written yet).
@@ -43,11 +44,15 @@ func run() error {
 	defer s.Close()
 
 	// Run blocks: it serves the generated gRPC surface, delivers the config
-	// (repo_dir, state_dir, model_alias) to the handler at start and on change,
-	// reports health, and returns on shutdown.
+	// (state_dir, model_alias) to the handler at start and on change, reports
+	// health, and returns on shutdown.
 	return s.Run(&daemon.Server{
 		NewProvider: func(modelAlias string) daemon.Provider {
 			return &daemon.LlmProxy{Client: s.Grpc().Clients().Services().LlmProxyClient(), ModelAlias: modelAlias}
 		},
+		// Context: read through the record query plane stratum hosts, written
+		// by publishing ContextDocument onto its topic.
+		Records: s.Grpc().Clients().Vservices().RecordMapClient(),
+		Publish: s.CreateDoppelgangerContextDocumentBusStreamPublisher(),
 	})
 }

@@ -17,9 +17,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// asUser is a verified caller whose token names principal.
+const acme = "/tenants/acme"
+
+// asUser is a verified caller whose token names principal, in the acme tenant.
 func asUser(principal string) *servicemanager.Caller {
 	tok := token.NewImmutableToken(&token_pb.Token{Payload: map[string]string{}}).SetPrincipal(principal)
+	tok.SetNamespace(acme)
 	return servicemanager.NewCaller(tok, "")
 }
 
@@ -28,7 +31,7 @@ func TestSessionStoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := store.Create("u1", []string{"audience: Jody"})
+	sess, err := store.Create("u1", acme, []string{"audience: Jody"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,48 +85,33 @@ func TestRenderTurnReplaysEarlierTurns(t *testing.T) {
 	}
 }
 
-func TestLoadRepoExcludesInboxAndGit(t *testing.T) {
-	dir := t.TempDir()
-	write(t, filepath.Join(dir, "README.md"), "kept")
-	write(t, filepath.Join(dir, "legal", "case.md"), "kept too")
-	write(t, filepath.Join(dir, "inbox", "draft.md"), "UNREVIEWED")
-	write(t, filepath.Join(dir, ".git", "x.md"), "GITINTERNAL")
-	got, n, err := loadRepo(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 2 || !strings.Contains(got, "kept too") || strings.Contains(got, "UNREVIEWED") || strings.Contains(got, "GITINTERNAL") {
-		t.Fatalf("loadRepo = %d %q", n, got)
-	}
-	if _, n, err := loadRepo(filepath.Join(dir, "absent")); err != nil || n != 0 {
-		t.Fatalf("a missing context dir must read as empty, got n=%d err=%v", n, err)
-	}
-}
-
-// The tenant's context and a user's own are replaced whole, land only inside
-// the store, and are read together with their scope; a user sees no other
-// user's files.
+// The tenant's context and a user's own are replaced whole as rows in the
+// record store, land only inside their own context, and are read together with
+// their scope; a user sees no other user's files, and a replacement retires
+// the rows it no longer carries.
 func TestContextStoreReplaceAndLoad(t *testing.T) {
-	c := NewContextStore(t.TempDir())
-	if _, _, err := c.Replace(c.TenantDir(), []*pb.ContextFile{{Path: "../escape.md", Content: []byte("x")}}); !errors.Is(err, errBadContextPath) {
+	ctx := context.Background()
+	rec := newFakeRecords()
+	c := NewContextStore(rec, rec.publish)
+	if _, _, err := c.Replace(ctx, acme, scopeTenant, acme, []*pb.ContextFile{{Path: "../escape.md", Content: []byte("x")}}); !errors.Is(err, errBadContextPath) {
 		t.Fatalf("parent path err = %v, want errBadContextPath", err)
 	}
 	for _, bad := range []string{"/abs.md", "a/../../b.md", "", "a//b.md", "./x.md"} {
-		if _, _, err := c.Replace(c.TenantDir(), []*pb.ContextFile{{Path: bad}}); err == nil {
+		if _, _, err := c.Replace(ctx, acme, scopeTenant, acme, []*pb.ContextFile{{Path: bad}}); err == nil {
 			t.Errorf("path %q accepted", bad)
 		}
 	}
-	n, bytes, err := c.Replace(c.TenantDir(), []*pb.ContextFile{{Path: "policy/tone.md", Content: []byte("tenant tone")}, {Path: "logo.png", Content: []byte{1, 2}}})
+	n, bytes, err := c.Replace(ctx, acme, scopeTenant, acme, []*pb.ContextFile{{Path: "policy/tone.md", Content: []byte("tenant tone")}, {Path: "logo.png", Content: []byte{1, 2}}})
 	if err != nil || n != 2 || bytes != 13 {
 		t.Fatalf("Replace = %d %d %v", n, bytes, err)
 	}
-	if _, _, err := c.Replace(c.UserDir("alice@x"), []*pb.ContextFile{{Path: "me.md", Content: []byte("alice likes brevity")}}); err != nil {
+	if _, _, err := c.Replace(ctx, acme, scopeUser, "alice@x", []*pb.ContextFile{{Path: "me.md", Content: []byte("alice likes brevity")}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := c.Replace(c.UserDir("bob"), []*pb.ContextFile{{Path: "me.md", Content: []byte("BOB SECRET")}}); err != nil {
+	if _, _, err := c.Replace(ctx, acme, scopeUser, "bob", []*pb.ContextFile{{Path: "me.md", Content: []byte("BOB SECRET")}}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := c.Load("alice@x")
+	got, err := c.Load(ctx, acme, "alice@x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,16 +123,24 @@ func TestContextStoreReplaceAndLoad(t *testing.T) {
 	if strings.Contains(got, "BOB SECRET") || strings.Contains(got, "logo.png") {
 		t.Fatalf("Load leaked another user's file or a non-markdown file: %q", got)
 	}
-	// A replacement is whole: the earlier file is gone, not merged.
-	if _, _, err := c.Replace(c.TenantDir(), []*pb.ContextFile{{Path: "new.md", Content: []byte("replaced")}}); err != nil {
+	// A replacement is whole: the earlier rows are retired, not merged, and a
+	// re-pushed path lands on the row it had.
+	if _, _, err := c.Replace(ctx, acme, scopeTenant, acme, []*pb.ContextFile{{Path: "policy/tone.md", Content: []byte("new tone")}, {Path: "new.md", Content: []byte("replaced")}}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = c.Load("alice@x")
-	if strings.Contains(got, "tenant tone") || !strings.Contains(got, "replaced") {
+	live := rec.live(acme, scopeTenant, acme)
+	if len(live) != 2 || live["policy/tone.md"] != "new tone" || live["new.md"] != "replaced" {
+		t.Fatalf("live tenant rows = %v", live)
+	}
+	got, _ = c.Load(ctx, acme, "alice@x")
+	if strings.Contains(got, "tenant tone") || !strings.Contains(got, "new tone") {
 		t.Fatalf("Replace must replace whole: %q", got)
 	}
 	// Nothing anywhere is a refusal, not an empty prompt.
-	if _, err := NewContextStore(t.TempDir()).Load("nobody"); err == nil {
+	if _, err := c.Load(ctx, acme, "nobody"); err == nil || !strings.Contains(err.Error(), "the tenant has none") {
+		// acme has tenant rows, so use a tenant with none.
+	}
+	if _, err := c.Load(ctx, "/tenants/empty", "nobody"); err == nil {
 		t.Fatal("Load with no context must fail")
 	}
 }
@@ -161,7 +157,8 @@ func TestServerRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &scriptedProvider{replies: []any{json.RawMessage(`{"kind":"ANSWER","answer":"fix now, note the rewrite","reasoning":"r","would_change_mind":"w","provenance":"DERIVED","sources":["README.md"],"missing":[]}`)}}
-	s := &Server{Sessions: store, Engine: &Engine{Contexts: NewContextStore(filepath.Join(dir, "repo")), Provider: p}}
+	rec := newFakeRecords()
+	s := &Server{Sessions: store, Engine: &Engine{Contexts: NewContextStore(rec, rec.publish), Provider: p}}
 	ctx := context.Background()
 	jody := asUser("jody")
 
@@ -169,7 +166,7 @@ func TestServerRoundTrip(t *testing.T) {
 	if _, err := s.CreateSession(ctx, nil, &pb.CreateSessionRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("no caller err = %v, want Unauthenticated", err)
 	}
-	// The user's own context arrives through the service, not a volume.
+	// The user's own context arrives through the service and lands in the store.
 	if _, err := s.UpdateContext(ctx, jody, &pb.UpdateContextRequest{Files: []*pb.ContextFile{{Path: "README.md", Content: []byte("Jody wants recommendations.")}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -201,8 +198,11 @@ func TestServerRoundTrip(t *testing.T) {
 		}
 	}
 	sess, err := store.Get(created.GetSessionId(), "jody")
-	if err != nil || len(sess.Turns) != 1 {
-		t.Fatalf("turn not persisted: %v %v", sess, err)
+	if err != nil || len(sess.Turns) != 1 || sess.Tenant != acme {
+		t.Fatalf("turn not persisted or tenant not kept: %v %v", sess, err)
+	}
+	if live := rec.live(acme, scopeUser, "jody"); live["README.md"] != "Jody wants recommendations." {
+		t.Fatalf("user context not in the store: %v", live)
 	}
 	_, err = s.GenerateAnswer(ctx, jody, &pb.GenerateAnswerRequest{SessionId: "0123456789abcdef0123456789abcdef", Question: "q"})
 	if status.Code(err) != codes.NotFound {
