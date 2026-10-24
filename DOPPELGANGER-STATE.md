@@ -220,3 +220,18 @@ finish the open items above, then size the tacplus work so it does not disturb t
   Skipper deploys the tenant's services; both use the operator library; Admiral deploys the base fleet.
 - Generator quirks noted, not fixed: every Go service hand-writes the ConfigState "not hosted" refusal and a
   `<Svc>ConfigStateConfig` no-op (tacplus emits a config hook per gRPC service incl. the appended state service).
+
+## 2026-10-24 — every proof-fleet service generates from fleet-seatrials
+- The fleet is 10 services: kernel, opa, gateway, letsencrypt, eventbus, stratum, oauth (user login; kernel and gateway
+  reference its contract), llmproxy, doppelganger, tenantecho. Lock pushed; llmproxy admits exactly ["doppelganger"].
+- Generated from build/proto and verified: doppelganger (tests), tenantecho (tests), opa (build), letsencrypt (build),
+  llmproxy (build), gateway (88 tests), oauth (104 tests, standalone), eventbus (compile), stratum (main compiles),
+  kernel (main compiles; full suite rerun in flight).
+- Fleet-knowledge fixed along the way: oauth's MintToken → sys minter (`minter.Minter` client); eventbus now OWNS the
+  trace topic (`eventbus.TraceEventBus.trace_events`; it used to be agentsensor's); gateway tests: tenantecho is the
+  live tenant-owned set, routing test takes any-user routes; kernel ConfigOverridesTest fixture uses oauth/llmproxy,
+  not mailbox; stratum's agentsensor hot path (typed map, Calcite SQL, cold-start replay) deleted.
+- Standalone `depends` added: oauth → kernel; eventbus → kernel. GCS SDK pinned (2.69.0) in stratum and the fleet.
+- OPEN: stratum's test suite (17 files, ~4k lines) uses agentsensor.AgentEvent as its sample record and does not
+  compile; retarget to a fleet-neutral record (or a test-only record proto). OPEN: fleet-dev is redundant now —
+  Jody to say delete. OPEN: cluster create/destroy + deploying the 10 services and two tenant namespaces.
