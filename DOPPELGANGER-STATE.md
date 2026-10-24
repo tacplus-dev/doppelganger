@@ -233,8 +233,8 @@ finish the open items above, then size the tacplus work so it does not disturb t
   live tenant-owned set, routing test takes any-user routes; kernel ConfigOverridesTest fixture uses oauth/llmproxy,
   not mailbox; stratum's agentsensor hot path (typed map, Calcite SQL, cold-start replay) deleted.
 - Standalone `depends` added: oauth → kernel; eventbus → kernel. GCS SDK pinned (2.69.0) in stratum and the fleet.
-- OPEN: stratum's test suite (17 files, ~4k lines) uses agentsensor.AgentEvent as its sample record and does not
-  compile; retarget to a fleet-neutral record (or a test-only record proto). OPEN: fleet-dev is redundant now —
+- stratum's test suite retargeted to letsencrypt.LetsEncryptCert (stratum 473c459): 133 run, 0 failures, 7 skipped —
+  the hot tier's write-path tests skip in a fleet with no (spec.store_epoch) record; 3 agentsensor-only tests deleted. OPEN: fleet-dev is redundant now —
   Jody to say delete. OPEN: cluster create/destroy + deploying the 10 services and two tenant namespaces.
 
 ## 2026-10-24 — deploying the proof fleet (in progress)
