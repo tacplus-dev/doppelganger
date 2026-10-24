@@ -301,3 +301,18 @@ finish the open items above, then size the tacplus work so it does not disturb t
   crash loop — reset both stratum PVCs (proof data is disposable). Open for Jody: a 2-node stratum cannot recover a
   lost node through that guard without an operator path. Fleet-side note: the fleet.lock gateway pin commit also
   swept in the regenerated client (one commit, 2 changes).
+- 2026-10-24 ~08:05Z: the gateway fix alone did not route: the health index never saw a tenant identity, because the
+  SERVICE'S OWN health identity was wrong in two ways, both in tacplus. (a) `ServiceLabel` derived the service name
+  from the module directory above the generated output, so every project generating into `<module>/tacplus`
+  (tenantecho, doppelganger — the derived-package layout) was labelled "tacplus": its authorizer accepted only aud
+  "tacplus" and its health SPIFFE id named no real service. Now the label is the proto package (SelfPackage), the id
+  kernel/gateway/audiences already use. (b) The health identity was assembled from config via ServiceSpiffeID, which
+  can only ever say `/system/<location>/services/<label>`; a tenant-owned instance's identity is
+  `spiffe://<td>/tenants/<t>/services/<svc>` and only the token kernel minted says so. Go, Java and Rust service
+  managers now publish the SUBJECT OF THEIR OWN SERVICE TOKEN (validated as a SPIFFE id, fail loudly without one).
+  tacplus 8f6e972 (tests + full suite green; kernel Java compiles, llmproxy cargo check clean). Fleet pin updated;
+  ci/tacplus-build rebuilding, then tenantecho + doppelganger images, then restart and the ping proof.
+  Also: tenantecho 77883f6 reports `served_by` = its SPIFFE identity (the bare service path is "tenantecho" for every
+  tenant, which is exactly what the proof must distinguish). Open question for Jody: the gateway's generic SPIFFE
+  endpoint index (`extract_spiffe_service_path`, org/cluster/service split) predates the current identity shape and
+  yields "alpha/services/tenantecho"; unused by routing today, left as is.
