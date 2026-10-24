@@ -209,4 +209,3 @@ func TestServerRoundTrip(t *testing.T) {
 		t.Fatalf("unknown session err = %v, want NotFound", err)
 	}
 }
-
