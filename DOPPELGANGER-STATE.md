@@ -236,3 +236,21 @@ finish the open items above, then size the tacplus work so it does not disturb t
 - OPEN: stratum's test suite (17 files, ~4k lines) uses agentsensor.AgentEvent as its sample record and does not
   compile; retarget to a fleet-neutral record (or a test-only record proto). OPEN: fleet-dev is redundant now —
   Jody to say delete. OPEN: cluster create/destroy + deploying the 10 services and two tenant namespaces.
+
+## 2026-10-24 — deploying the proof fleet (in progress)
+- fleet-seatrials now carries: `cluster/create.sh|destroy.sh` (GKE zonal `seatrials`, 3× e2-standard-2 amd64, us-central1-a;
+  static IP `seatrials-gateway` = 146.148.80.132), `images/` (Cloud Build: `images/build.sh tacplus|all|<svc>` — clones each
+  repo at the lock's commit, copies build/proto in, builds in `ci/tacplus-build:<tacplus commit>` = ghcr build image +
+  pinned tacplus; pushes `<AR>/schematic/<svc>:<fleet commit>` and `:local`), `deploy/build-operator.sh` (operator library
+  @ pinned commit generated against build/proto → bin/schematic-operator), `deploy/bootstrap/` (operator.yaml: one of
+  everything, tenants alpha+beta, app_services llmproxy/doppelganger/tenantecho, nip.io fqdn, cert-chain TLS; services/*.yaml).
+  build/proto is committed. `schematic-operator generate` renders 56 chart files incl. tenantecho-alpha/-beta.
+- tacplus: a library's own proto joins an explicit fleet --src tree (operator against build/proto works). operator: blobstore
+  volume groups + mailbox example writer removed (Seabeam's fleet repo carries them); green against the proof fleet.
+- Found on the way: the operator's hardcoded platform set is kernel/eventbus/gateway/oauth/opa/stratum/kmaker(+optional
+  letsencrypt etc.); everything else is `app_services`. kmaker is always rendered → added to the fleet (11 services).
+  Tenant-owned instances share ONE k8s namespace today (`tenantecho-alpha`, `-beta`); per-tenant namespaces = Admiral/Skipper.
+- OPEN before the proof answers: (1) llmproxy's four Anthropic federation ids (services/llmproxy.yaml) — Jody; (2) an OAuth
+  provider (Google client id/secret, redirect to the nip.io fqdn) so a user can log in — Jody; (3) doppelganger's context
+  repo at repo_dir (a git-sync sidecar with a deploy key, fleet-layer) — until then NEEDS_CONTEXT answers; (4) the local
+  client itself (oauth Session bidi + kernel CliTokenBroker, as cavalier's curl-login.sh does).
