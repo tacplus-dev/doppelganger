@@ -165,3 +165,11 @@ finish the open items above, then size the tacplus work so it does not disturb t
 - Not done: kernel's Java implementing minter.Minter; gateway/operator generation; images; the small cluster; doppelganger's
   own surface (C2D -> fleet service with caller token) and its llmproxy client; cross-test fixtures; proto layout flattening;
   `kind:` consistency checks. The private platform's pushed state is 2026-08-29; everything newer is local.
+
+## 2026-10-24 early — fleet-side services
+- kernel implements minter.Minter and hosts the sys health root (compiles; tests being rebased off launch-bundle samples).
+- gateway proxies minting to the sys minter, reads the sys health root; 88 tests green. Dead/product tests removed.
+- operator is a LIBRARY (Jody): `kind: library`, out of the fleet's service list; a deployment repo builds its operator
+  from it against build/proto. Harness rendering leaves the library (fleet layer). Module split is the follow-up.
+- Dev fleet: 13 services (kernel, opa, gateway, stratum, eventbus, kmaker, oauth, letsencrypt, blobstore, messaging,
+  mailbox, llmproxy, doppelganger). Stratum already ported (Jody re-confirmed).
