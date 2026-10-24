@@ -333,3 +333,11 @@ finish the open items above, then size the tacplus work so it does not disturb t
   `context push DIR [--tenant]`. Every image is now built on tacplus 8f6e972 and restarted (all 1/1); operator
   re-applied → doppelganger-alpha0/beta0. Found: deploy/build-operator.sh picks `tacplus` from PATH unless TACPLUS is
   set, and ~/.local/bin/tacplus is a stale local build (version 0.0.0) — run it with TACPLUS=<pinned build>.
+- 2026-10-24 ~16:30Z: doppelganger-alpha0/beta0 crash-looped on "RepoDir is required": kernel's per-service config
+  root (<Svc>ConfigState) is namespace-chrooted, and a tenant-owned instance is a confined caller with no entry of
+  its own, so every per-tenant instance read an EMPTY config (tenantecho's greeting was empty for the same reason,
+  unnoticed because nothing there is required). Fixed in kernel codegen 847ce57: a service's config root reads the
+  fleet's system entry as the tenant's default; a tenant-level entry, once written, wins; writes stay chrooted. That
+  is the "tenant level config" shape with sane defaults, no per-tenant fan-out at install. Also: ContextFile.content
+  now allows 1 MiB (the default bytes cap is 32 KiB; the jody repo has an 84 KB file). Kernel + doppelganger images
+  rebuilding, then restart and the context push / ask proof.
