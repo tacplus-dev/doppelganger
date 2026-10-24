@@ -258,3 +258,11 @@ finish the open items above, then size the tacplus work so it does not disturb t
   schematic/launcher: PID 1 that forwards signals, propagates the exit code, kills a deadlocked child on gRPC health).
   All 11 Dockerfiles: `COPY launcher-linux-${TARGETARCH} /usr/local/bin/launcher`, `ENV LAUNCH_CMD=<svc> HEALTH_PORT=8443`
   (kernel 5000), `ENTRYPOINT ["launcher"]`. The fleet's build image (`ci/tacplus-build:<tacplus commit>`) carries it.
+- FIRST APPLY to the seatrials cluster (2026-10-24 ~05:48Z): all 11 workloads scheduled, images pulled from Artifact
+  Registry, launcher as PID 1 everywhere. kernel, gateway (LB 146.148.80.132, "tenant-owned services route per caller
+  tenant: tenantecho"), llmproxy, oauth, kmaker came up 1/1. Go services (opa, doppelganger, tenantecho) and Java
+  (stratum, eventbus) stuck: X509Mint denied — "delegate … not authorized for service minter". Root cause in tacplus:
+  moving ServiceHealth into sys/ made the chassis read the state store's identity as the proto package (servicehealth)
+  and left the minter package unmapped, so services minted for audiences kernel never serves. Fixed in tacplus 1eca5e4
+  (DiscoverStateRoot carries the root's host label; the minter package maps to its host; Go/Java/Rust/TS). Images
+  rebuilding at that pin; redeploy next. deploy/secrets.sh creates the (empty) oauth pipeline secret the chart expects.
