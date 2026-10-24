@@ -409,3 +409,15 @@ finish the open items above, then size the tacplus work so it does not disturb t
   failed llmproxy's parser: "no text or tool_use block in content" — block type unknown to it. llmproxy 34fa79c now
   names the stop_reason and block types in that error. doppelganger 4faf7c0: context reads see this instance's own
   push before stratum has the rows (same write-through cache as sessions; beta's push-then-ask read "no context").
+- 2026-10-24 ~22:10Z: **DOPPELGANGER ANSWERS.** llmproxy 56814d7 defaults max_tokens to 4096 when a caller sets none (0
+  on the wire gave Anthropic no room: stop_reason max_tokens, no content). With that, `ask --as beta` (one user file)
+  and `ask --as alpha` (the whole jody repo as tenant context + a user file) both return real, sourced answers
+  through gateway → doppelganger-<tenant> → stratum (context, session) → llmproxy → Anthropic (federated token). The
+  proof fleet does everything Jody asked. Also underway (Jody: "no web UI; base login should be part of this"):
+  gateway/webapp — a tacplus TypeScript client (registry id 105, proto/clients/webapp.proto: W2S oauth.Auth +
+  gateway.Mint) that is the gateway's own web console, today the sign-in page (ListProviders → Authorize with the
+  page as callback → MintCallbackTokens → identity; sign out revokes). Built in the gateway image step from webapp/
+  into webapp-dist/ (the fleet's service.cloudbuild rust step). Lessons: the gateway's .gitignore `clients/` swallowed
+  proto/clients/ (now excepted); a proto cannot sit at the proto root. Blocked on Jody for a real Google OAuth client
+  (oauth.yaml has placeholders) and where its client_secret lives (proposed: oauth.Secrets.google_client_secret via
+  oauth-pipeline-secrets, not the yaml).
