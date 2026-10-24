@@ -52,10 +52,11 @@ func TestQuoteRejectionNamesTheQuote(t *testing.T) {
 // the first call, then answers cleanly once the rejection is in its input.
 func TestEngineRetriesFabricatedQuote(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir+"/repo/life.md", quoteRepo)
+	c := NewContextStore(dir + "/repo")
+	write(t, c.TenantDir()+"/life.md", quoteRepo)
 	misquote := answerWith("QUOTED", `He said "Leave education off outward material, and never claim a degree."`)
 	p := &scriptedProvider{replies: []any{misquote, answerWith("DERIVED", "Omit education.")}}
-	e := &Engine{RepoDir: dir + "/repo", Provider: p}
+	e := &Engine{Contexts: c, Provider: p}
 	a, err := e.Answer(t.Context(), &Session{}, "education?")
 	if err != nil || a.Answer != "Omit education." {
 		t.Fatalf("answer = %q, err = %v", a.Answer, err)
@@ -66,10 +67,11 @@ func TestEngineRetriesFabricatedQuote(t *testing.T) {
 // its quotation marks removed on the last attempt, never a fabricated quote.
 func TestEnginePersistentFabricationIsStripped(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir+"/repo/life.md", quoteRepo)
+	c := NewContextStore(dir + "/repo")
+	write(t, c.TenantDir()+"/life.md", quoteRepo)
 	misquote := answerWith("QUOTED", `He said "Leave education off outward material, and never claim a degree." and "better to just keep it SE."`)
 	p := &scriptedProvider{replies: []any{misquote, misquote, misquote}}
-	e := &Engine{RepoDir: dir + "/repo", Provider: p}
+	e := &Engine{Contexts: c, Provider: p}
 	a, err := e.Answer(t.Context(), &Session{}, "education?")
 	if err != nil {
 		t.Fatal(err)

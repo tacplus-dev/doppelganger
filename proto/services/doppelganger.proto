@@ -4,7 +4,7 @@ package doppelganger;
 
 import "sys/spec.proto";
 
-option (spec.service) = {name: "doppelganger"};
+option (spec.service) = {name: "doppelganger", tenant_owned: true};
 
 // ---------------------------------------------------------------------------
 // Doppelganger: a fleet service that answers questions on Jody's behalf from
@@ -13,10 +13,14 @@ option (spec.service) = {name: "doppelganger"};
 // Pushback is just the next GenerateAnswer in the same session: it re-answers
 // with whatever the caller added; it does not repeat itself.
 //
-// Client-facing (C2S) through the gateway: the caller is an authenticated user
-// of the fleet (RPC_FLAG_AUTH_ANY_USER on every RPC — this is a personal
-// service, the fleet's users are its users). The model is reached through
-// llmproxy over S2S; doppelganger holds no model credential.
+// One instance per tenant (tenant_owned), shared by that tenant's users; the
+// gateway routes each caller to their tenant's instance. Client-facing (C2S):
+// the caller is an authenticated user of the tenant. Answers rest on two
+// layers of context held by the instance: the tenant's (UpdateTenantContext,
+// a tenant-admin entitlement) and the calling user's own (UpdateContext, any
+// user, their own files only). The model is reached through llmproxy over S2S;
+// doppelganger holds no model credential. Context lives on the instance's
+// disk until stratum is ported, when it moves there.
 // ---------------------------------------------------------------------------
 
 // The model call goes through llmproxy; the fleet build admits doppelganger as
@@ -26,9 +30,9 @@ option (spec.grpc_s2s_client) = {service: "llmproxy.LlmProxy"};
 message Config {
   option (spec.grpc_config) = {service_name: "doppelganger"};
 
-  // repo_dir is the checkout of the jody context repo the answers rest on.
-  // The deployment puts it there (a volume or an init step); this service
-  // only reads it, on every answer.
+  // repo_dir holds the context the answers rest on: tenant/ for the tenant's
+  // shared context and users/<user>/ for each user's own, both written only
+  // through this service's Update*Context RPCs and read on every answer.
   string repo_dir = 1 [(spec.assert_required) = true];
   // state_dir holds session state (context and turns), one file per session.
   string state_dir = 2 [(spec.assert_required) = true];
@@ -52,6 +56,35 @@ message UpdateSessionRequest {
 }
 
 message UpdateSessionResponse {}
+
+// ContextFile is one file of a context: a repository-relative path and its
+// content. Only Markdown (.md) is read into answers; anything else is kept
+// but ignored.
+message ContextFile {
+  string path    = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 512];
+  bytes  content = 2;
+}
+
+// UpdateContextRequest replaces the calling user's own context, whole: the
+// files given are the context afterwards, nothing else. An empty list clears it.
+message UpdateContextRequest {
+  repeated ContextFile files = 1 [(spec.assert_max_size) = 4096];
+}
+
+message UpdateContextResponse {
+  int32 file_count = 1;
+  int64 byte_count = 2;
+}
+
+// UpdateTenantContextRequest replaces the tenant's shared context, whole.
+message UpdateTenantContextRequest {
+  repeated ContextFile files = 1 [(spec.assert_max_size) = 4096];
+}
+
+message UpdateTenantContextResponse {
+  int32 file_count = 1;
+  int64 byte_count = 2;
+}
 
 message GenerateAnswerRequest {
   string session_id = 1 [(spec.assert_required) = true];
@@ -99,10 +132,23 @@ service Doppelganger {
   rpc UpdateSession(UpdateSessionRequest) returns (UpdateSessionResponse) {
     option (spec.rpc) = {flags: [RPC_FLAG_AUTH_ANY_USER]};
   }
-  // Answers one question in a session as Jody would, from the jody context
-  // repo, with reasoning, provenance and sources. Asking again in the same
-  // session with more context is how to push back; it does not repeat itself.
+  // Answers one question in a session as the person the context describes
+  // would, from the tenant's context and the caller's own, with reasoning,
+  // provenance and sources. Asking again in the same session with more context
+  // is how to push back; it does not repeat itself. A session belongs to the
+  // user who opened it.
   rpc GenerateAnswer(GenerateAnswerRequest) returns (GenerateAnswerResponse) {
     option (spec.rpc) = {flags: [RPC_FLAG_AUTH_ANY_USER]};
+  }
+  // Replaces the calling user's own context with the files given. Any user of
+  // the tenant may do this; it reaches only their own context.
+  rpc UpdateContext(UpdateContextRequest) returns (UpdateContextResponse) {
+    option (spec.rpc) = {flags: [RPC_FLAG_AUTH_ANY_USER]};
+  }
+  // Replaces the tenant's shared context with the files given. Entitlement
+  // gated: the caller's token must carry this RPC's grant, which the tenant's
+  // ceiling must allow.
+  rpc UpdateTenantContext(UpdateTenantContextRequest) returns (UpdateTenantContextResponse) {
+    option (spec.rpc) = {};
   }
 }

@@ -16,7 +16,9 @@ import (
 // Session is the durable state of one caller conversation. One JSON file per
 // session in the sessions directory. Stale-session cleanup is not implemented yet.
 type Session struct {
-	ID        string    `json:"id"`
+	ID string `json:"id"`
+	// Owner is the user who opened the session; nobody else can read or extend it.
+	Owner     string    `json:"owner"`
 	CreatedAt time.Time `json:"created_at"`
 	Context   []string  `json:"context"`
 	Turns     []Turn    `json:"turns"`
@@ -45,13 +47,14 @@ func NewSessionStore(dir string) (*SessionStore, error) {
 	return &SessionStore{dir: dir}, nil
 }
 
-func (s *SessionStore) Create(context []string) (*Session, error) {
+func (s *SessionStore) Create(owner string, context []string) (*Session, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		return nil, err
 	}
 	sess := &Session{
 		ID:        hex.EncodeToString(buf),
+		Owner:     owner,
 		CreatedAt: time.Now().UTC(),
 		Context:   append([]string{}, context...),
 		Turns:     []Turn{},
@@ -61,16 +64,18 @@ func (s *SessionStore) Create(context []string) (*Session, error) {
 	return sess, s.write(sess)
 }
 
-func (s *SessionStore) Get(id string) (*Session, error) {
+// Get returns owner's session id. Another user's session is not found: its
+// existence is theirs to know.
+func (s *SessionStore) Get(id, owner string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.read(id)
+	return s.readOwned(id, owner)
 }
 
-func (s *SessionStore) AppendContext(id string, context []string) error {
+func (s *SessionStore) AppendContext(id, owner string, context []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess, err := s.read(id)
+	sess, err := s.readOwned(id, owner)
 	if err != nil {
 		return err
 	}
@@ -78,10 +83,10 @@ func (s *SessionStore) AppendContext(id string, context []string) error {
 	return s.write(sess)
 }
 
-func (s *SessionStore) AppendTurn(id string, turn Turn) error {
+func (s *SessionStore) AppendTurn(id, owner string, turn Turn) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess, err := s.read(id)
+	sess, err := s.readOwned(id, owner)
 	if err != nil {
 		return err
 	}
@@ -95,6 +100,17 @@ func (s *SessionStore) path(id string) (string, error) {
 		return "", ErrSessionNotFound
 	}
 	return filepath.Join(s.dir, id+".json"), nil
+}
+
+func (s *SessionStore) readOwned(id, owner string) (*Session, error) {
+	sess, err := s.read(id)
+	if err != nil {
+		return nil, err
+	}
+	if sess.Owner != owner {
+		return nil, ErrSessionNotFound
+	}
+	return sess, nil
 }
 
 func (s *SessionStore) read(id string) (*Session, error) {

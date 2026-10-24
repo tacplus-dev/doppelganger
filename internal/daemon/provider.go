@@ -21,7 +21,7 @@ type Provider interface {
 // Request is one model call.
 type Request struct {
 	System string // system prompt
-	Repo   string // the whole context repo; identical on every call, so providers may cache it
+	Repo   string // the caller's whole context (tenant and user); the same for a given caller until it is replaced
 	Turn   string // caller context, earlier turns, the question, and any rejection of a previous answer
 	Schema string // JSON Schema the answer must satisfy
 }

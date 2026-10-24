@@ -48,7 +48,7 @@ func (s *Server) DoppelgangerConfig(cfg *pb.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Sessions = sessions
-	s.Engine = &Engine{RepoDir: cfg.GetRepoDir(), Provider: s.NewProvider(cfg.GetModelAlias())}
+	s.Engine = &Engine{Contexts: NewContextStore(cfg.GetRepoDir()), Provider: s.NewProvider(cfg.GetModelAlias())}
 	return nil
 }
 
@@ -92,26 +92,90 @@ func (s *Server) current() (*SessionStore, *Engine) {
 // change, so there is nothing to flush.
 func (s *Server) Shutdown(context.Context) {}
 
-func (s *Server) CreateSession(_ context.Context, _ *servicemanager.Caller, req *pb.CreateSessionRequest) (*pb.CreateSessionResponse, error) {
+// callerUser is the user an RPC acts for: the token's principal (its subject
+// when no principal is set). Every RPC here is a user's, so no caller is a
+// refusal, not an anonymous session.
+func callerUser(caller *servicemanager.Caller) (string, error) {
+	if caller == nil || caller.Token() == nil {
+		return "", status.Error(codes.Unauthenticated, "no caller identity")
+	}
+	user := caller.Token().GetPrincipal()
+	if user == "" {
+		user = caller.Token().GetSubject()
+	}
+	if user == "" {
+		return "", status.Error(codes.Unauthenticated, "caller token names no principal")
+	}
+	return user, nil
+}
+
+func (s *Server) CreateSession(_ context.Context, caller *servicemanager.Caller, req *pb.CreateSessionRequest) (*pb.CreateSessionResponse, error) {
+	user, err := callerUser(caller)
+	if err != nil {
+		return nil, err
+	}
 	sessions, _ := s.current()
-	sess, err := sessions.Create(req.GetContext())
+	sess, err := sessions.Create(user, req.GetContext())
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &pb.CreateSessionResponse{SessionId: sess.ID}, nil
 }
 
-func (s *Server) UpdateSession(_ context.Context, _ *servicemanager.Caller, req *pb.UpdateSessionRequest) (*pb.UpdateSessionResponse, error) {
+func (s *Server) UpdateSession(_ context.Context, caller *servicemanager.Caller, req *pb.UpdateSessionRequest) (*pb.UpdateSessionResponse, error) {
+	user, err := callerUser(caller)
+	if err != nil {
+		return nil, err
+	}
 	sessions, _ := s.current()
-	if err := sessions.AppendContext(req.GetSessionId(), req.GetContext()); err != nil {
+	if err := sessions.AppendContext(req.GetSessionId(), user, req.GetContext()); err != nil {
 		return nil, sessionError(err)
 	}
 	return &pb.UpdateSessionResponse{}, nil
 }
 
-func (s *Server) GenerateAnswer(ctx context.Context, _ *servicemanager.Caller, req *pb.GenerateAnswerRequest) (*pb.GenerateAnswerResponse, error) {
+// UpdateContext replaces the caller's own context; it can reach nobody else's.
+func (s *Server) UpdateContext(_ context.Context, caller *servicemanager.Caller, req *pb.UpdateContextRequest) (*pb.UpdateContextResponse, error) {
+	user, err := callerUser(caller)
+	if err != nil {
+		return nil, err
+	}
+	_, engine := s.current()
+	n, bytes, err := engine.Contexts.Replace(engine.Contexts.UserDir(user), req.GetFiles())
+	if err != nil {
+		return nil, contextError(err)
+	}
+	return &pb.UpdateContextResponse{FileCount: int32(n), ByteCount: bytes}, nil
+}
+
+// UpdateTenantContext replaces the tenant's shared context. Who may call it is
+// the generated authorizer's decision (this RPC's grant); here it is only done.
+func (s *Server) UpdateTenantContext(_ context.Context, caller *servicemanager.Caller, req *pb.UpdateTenantContextRequest) (*pb.UpdateTenantContextResponse, error) {
+	if _, err := callerUser(caller); err != nil {
+		return nil, err
+	}
+	_, engine := s.current()
+	n, bytes, err := engine.Contexts.Replace(engine.Contexts.TenantDir(), req.GetFiles())
+	if err != nil {
+		return nil, contextError(err)
+	}
+	return &pb.UpdateTenantContextResponse{FileCount: int32(n), ByteCount: bytes}, nil
+}
+
+func contextError(err error) error {
+	if errors.Is(err, errBadContextPath) {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	return status.Error(codes.Internal, err.Error())
+}
+
+func (s *Server) GenerateAnswer(ctx context.Context, caller *servicemanager.Caller, req *pb.GenerateAnswerRequest) (*pb.GenerateAnswerResponse, error) {
+	user, err := callerUser(caller)
+	if err != nil {
+		return nil, err
+	}
 	sessions, engine := s.current()
-	sess, err := sessions.Get(req.GetSessionId())
+	sess, err := sessions.Get(req.GetSessionId(), user)
 	if err != nil {
 		return nil, sessionError(err)
 	}
@@ -119,7 +183,7 @@ func (s *Server) GenerateAnswer(ctx context.Context, _ *servicemanager.Caller, r
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
-	if err := sessions.AppendTurn(sess.ID, Turn{Question: req.GetQuestion(), Answer: a}); err != nil {
+	if err := sessions.AppendTurn(sess.ID, user, Turn{Question: req.GetQuestion(), Answer: a}); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &pb.GenerateAnswerResponse{

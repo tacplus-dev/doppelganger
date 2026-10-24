@@ -34,9 +34,9 @@ func answerJSON(answer string) json.RawMessage {
 
 func newEngine(t *testing.T, p Provider) *Engine {
 	t.Helper()
-	repo := filepath.Join(t.TempDir(), "repo")
-	write(t, filepath.Join(repo, "notes.md"), `Jody said *"I really want stuff that matters."* and the repo recommends recommendations.`)
-	return &Engine{RepoDir: repo, Provider: p}
+	c := NewContextStore(filepath.Join(t.TempDir(), "repo"))
+	write(t, filepath.Join(c.TenantDir(), "notes.md"), `Jody said *"I really want stuff that matters."* and the repo recommends recommendations.`)
+	return &Engine{Contexts: c, Provider: p}
 }
 
 func TestEngineRequestShape(t *testing.T) {

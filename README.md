@@ -5,15 +5,20 @@ to answer. Design and rules: `~/workspace/jody/agents.md`, "An agent that repres
 
 ## Shape
 
-- A fleet service: the tacplus **C2S** service `Doppelganger`, reached through the fleet's
-  gateway by an authenticated user (every RPC is `RPC_FLAG_AUTH_ANY_USER`). The generated
-  service manager (`tacplus/s2sm`) serves it; `internal/daemon/server.go` is only the handler.
+- A fleet service: the tacplus **C2S** service `Doppelganger`, **tenant-owned** (one instance
+  per tenant, shared by that tenant's users; the gateway routes each caller to theirs), reached
+  through the fleet's gateway by an authenticated user of the tenant. The generated service
+  manager (`tacplus/s2sm`) serves it; `internal/daemon/server.go` is only the handler.
 - The model is reached through **llmproxy** over S2S with doppelganger's own identity
   (`depends: [llmproxy]`, `(spec.grpc_s2s_client)`); the fleet build admits doppelganger as a
   caller. Doppelganger holds no model credential.
 - Config (`repo_dir`, `state_dir`, `model_alias`) comes from the fleet's config state, delivered
-  by the service manager at start and on change. The deployment puts the jody context repo at
-  `repo_dir`.
+  by the service manager at start and on change. Context is two layers under `repo_dir`, both
+  written only through the service: the tenant's shared context (`UpdateTenantContext`, gated by
+  that RPC's grant) and each user's own (`UpdateContext`, any user, their own files). Answers
+  rest on both. It lives on the instance's disk until stratum is ported, when it moves there.
+- Sessions belong to the user who opened them; another user of the tenant cannot read or
+  extend one.
 - Sessions: a caller opens one with context (who they are, who the answer is for, what it is
   for), asks, and pushes back by asking again in the same session with more context; the
   engine re-answers with the new information.
