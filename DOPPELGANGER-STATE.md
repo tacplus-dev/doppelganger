@@ -212,7 +212,10 @@ finish the open items above, then size the tacplus work so it does not disturb t
   exactly that; doppelganger and llmproxy generate and test green from its build/proto. Runs on a small cluster
   created/destroyed per trial (Jody). fleet-dev is now redundant — ask Jody before deleting.
 - Second proof (Jody): a trivial tenant-owned service in two tenant namespaces; gateway must route each tenant's
-  call to that tenant's instance. Registered as **tenantecho** (id 103, github.com/tacplus-dev/tenantecho, public).
+  call to that tenant's instance. **tenantecho** (id 103, github.com/tacplus-dev/tenantecho, public) is written:
+  `tenant_owned`, C2S `TenantEcho.Ping` (any user) answering {message, served_by = own identity path from its own
+  token, caller_namespace, greeting}; in fleet-seatrials (now 9 services). Deploying it into two tenant namespaces
+  is the fleet-layer work still open (tenants in the operator Config, Skipper shape).
 - Admiral/Skipper (Jody): per-tenant namespaces; Admiral creates/deletes them and deploys the tenant's Skipper;
   Skipper deploys the tenant's services; both use the operator library; Admiral deploys the base fleet.
 - Generator quirks noted, not fixed: every Go service hand-writes the ConfigState "not hosted" refusal and a
