@@ -389,3 +389,13 @@ finish the open items above, then size the tacplus work so it does not disturb t
   llmproxy → Anthropic 401), while a made-up id is NotFound. Context likewise survived the rollout with no re-push.
   Kernel, stratum, eventbus, doppelganger rebuilt; operator re-applied; 14/14 pods 1/1. Client: `ask --session ID`.
   personalauth is boneyard (Jody) — not in the port list. Still waiting on the four Anthropic federation ids.
+- 2026-10-24 ~20:30Z: **The fleet is a public OIDC issuer: https://seatrials.tacplus.dev.** Jody: the nip.io name with a
+  private CA is not valid for Anthropic's federation; use Let's Encrypt and a tacplus.dev hostname (persistable). A
+  record seatrials → 146.148.80.132 added at GoDaddy (via Chrome, his session). operator.yaml: fqdn
+  seatrials.tacplus.dev, tls.letsencrypt true; apply deployed letsencrypt0, opened port 80 on the gateway LB for
+  HTTP-01, kernel restarted on the new issuer; LE issued CN=seatrials.tacplus.dev (notAfter 2027-01-22) and the
+  gateway swapped to it; discovery + JWKS now verify with public CAs (ssl_verify=0). kernel.yaml gained the
+  letsencrypt delegate (operator-written). Client default gateway is seatrials.tacplus.dev:443, no SEATRIALS_CA.
+  Anthropic console: issuer (discovery, no CA), service account, rule (sub prefix
+  spiffe://local.dev/system/services/llmproxy, aud https://api.anthropic.com, scope workspace:inference) → the ids
+  go into services/llmproxy.yaml. llmproxy's delegate already carries external_audiences [https://api.anthropic.com].
