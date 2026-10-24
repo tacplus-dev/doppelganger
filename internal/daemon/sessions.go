@@ -1,55 +1,85 @@
+// Copyright (c) 2026 Jody Scott
+// SPDX-License-Identifier: Apache-2.0
+
 package daemon
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"iter"
 	"regexp"
 	"sync"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
+
+	pb "github.com/tacplus-dev/doppelganger/tacplus/types/services/doppelganger"
+	query_pb "github.com/tacplus-dev/doppelganger/tacplus/types/vservices/query"
 )
 
-// Session is the durable state of one caller conversation. One JSON file per
-// session in the sessions directory. Stale-session cleanup is not implemented yet.
+// Session is one caller conversation as the engine sees it: the context they
+// gave and the turns so far. It is stored as the Session record in stratum.
 type Session struct {
-	ID string `json:"id"`
+	ID string
 	// Owner is the user who opened the session; nobody else can read or extend it.
-	Owner string `json:"owner"`
+	Owner string
 	// Tenant is the namespace the session's context is read from.
-	Tenant    string    `json:"tenant"`
-	CreatedAt time.Time `json:"created_at"`
-	Context   []string  `json:"context"`
-	Turns     []Turn    `json:"turns"`
+	Tenant    string
+	CreatedAt time.Time
+	Context   []string
+	Turns     []Turn
 }
 
 // Turn is one question and the answer given. Earlier turns are replayed into
 // every later question so that pushback is answered, not repeated.
 type Turn struct {
-	Question string `json:"question"`
-	Answer   Answer `json:"answer"`
+	Question string
+	Answer   Answer
 }
 
 var ErrSessionNotFound = errors.New("session not found")
 
 var sessionIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
+// sessionRecords is the generated record query plane's S2S half over Session.
+type sessionRecords interface {
+	CreateSessionQuery(ctx context.Context, req *query_pb.OpenSessionQueryRequest, opts ...grpc.CallOption) (*query_pb.QueryHandle, error)
+	ListSession(ctx context.Context, req *query_pb.PullSessionRequest, opts ...grpc.CallOption) iter.Seq2[*pb.Session, error]
+	DeleteSessionQuery(ctx context.Context, req *query_pb.QueryHandle, opts ...grpc.CallOption) (*query_pb.QueryStats, error)
+}
+
+// recentTTL bounds the write-through cache below: a session this instance
+// published is served from memory this long, which covers the moment between
+// publishing a row and stratum having stored it (a caller opens a session and
+// asks in the next call). After that the store is the only truth.
+const recentTTL = 10 * time.Minute
+
+type recentSession struct {
+	sess    *pb.Session
+	expires time.Time
+}
+
+// SessionStore keeps sessions as Session records in stratum: every change
+// republishes the whole session; reads are a point query on the key, after
+// the write-through cache of this instance's own recent publishes.
 type SessionStore struct {
-	dir string
-	mu  sync.Mutex
+	records sessionRecords
+	publish func(context.Context, *pb.Session) error
+	now     func() time.Time
+
+	mu     sync.Mutex
+	recent map[string]recentSession
 }
 
-func NewSessionStore(dir string) (*SessionStore, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create sessions dir: %w", err)
-	}
-	return &SessionStore{dir: dir}, nil
+func NewSessionStore(records sessionRecords, publish func(context.Context, *pb.Session) error) *SessionStore {
+	return &SessionStore{records: records, publish: publish, now: time.Now, recent: map[string]recentSession{}}
 }
 
-func (s *SessionStore) Create(owner, tenant string, context []string) (*Session, error) {
+func (s *SessionStore) Create(ctx context.Context, owner, tenant string, context_ []string) (*Session, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		return nil, err
@@ -58,105 +88,124 @@ func (s *SessionStore) Create(owner, tenant string, context []string) (*Session,
 		ID:        hex.EncodeToString(buf),
 		Owner:     owner,
 		Tenant:    tenant,
-		CreatedAt: time.Now().UTC(),
-		Context:   append([]string{}, context...),
+		CreatedAt: s.now().UTC(),
+		Context:   append([]string{}, context_...),
 		Turns:     []Turn{},
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return sess, s.write(sess)
+	return sess, s.write(ctx, sess)
 }
 
 // Get returns owner's session id. Another user's session is not found: its
 // existence is theirs to know.
-func (s *SessionStore) Get(id, owner string) (*Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.readOwned(id, owner)
+func (s *SessionStore) Get(ctx context.Context, id, owner string) (*Session, error) {
+	rec, err := s.read(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if rec.GetOwner() != owner {
+		return nil, ErrSessionNotFound
+	}
+	return fromRecord(rec), nil
 }
 
-func (s *SessionStore) AppendContext(id, owner string, context []string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, err := s.readOwned(id, owner)
+func (s *SessionStore) AppendContext(ctx context.Context, id, owner string, context_ []string) error {
+	sess, err := s.Get(ctx, id, owner)
 	if err != nil {
 		return err
 	}
-	sess.Context = append(sess.Context, context...)
-	return s.write(sess)
+	sess.Context = append(sess.Context, context_...)
+	return s.write(ctx, sess)
 }
 
-func (s *SessionStore) AppendTurn(id, owner string, turn Turn) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, err := s.readOwned(id, owner)
+func (s *SessionStore) AppendTurn(ctx context.Context, id, owner string, turn Turn) error {
+	sess, err := s.Get(ctx, id, owner)
 	if err != nil {
 		return err
 	}
 	sess.Turns = append(sess.Turns, turn)
-	return s.write(sess)
+	return s.write(ctx, sess)
 }
 
-func (s *SessionStore) path(id string) (string, error) {
-	// The id becomes a filename, so it must be exactly what Create mints.
+// write publishes the whole session and remembers it for recentTTL.
+func (s *SessionStore) write(ctx context.Context, sess *Session) error {
+	rec := toRecord(sess, s.now().UnixMilli())
+	if err := s.publish(ctx, rec); err != nil {
+		return fmt.Errorf("publishing session %s: %w", sess.ID, err)
+	}
+	s.mu.Lock()
+	s.recent[sess.ID] = recentSession{sess: rec, expires: s.now().Add(recentTTL)}
+	s.mu.Unlock()
+	return nil
+}
+
+// read is this instance's recent publish of id if it has one, else the
+// store's row: a point query on the key, paged (one row), and closed.
+func (s *SessionStore) read(ctx context.Context, id string) (*pb.Session, error) {
 	if !sessionIDPattern.MatchString(id) {
-		return "", ErrSessionNotFound
-	}
-	return filepath.Join(s.dir, id+".json"), nil
-}
-
-func (s *SessionStore) readOwned(id, owner string) (*Session, error) {
-	sess, err := s.read(id)
-	if err != nil {
-		return nil, err
-	}
-	if sess.Owner != owner {
 		return nil, ErrSessionNotFound
 	}
-	return sess, nil
-}
-
-func (s *SessionStore) read(id string) (*Session, error) {
-	p, err := s.path(id)
-	if err != nil {
-		return nil, err
+	s.mu.Lock()
+	now := s.now()
+	for k, r := range s.recent {
+		if !now.Before(r.expires) {
+			delete(s.recent, k)
+		}
 	}
-	data, err := os.ReadFile(p)
-	if errors.Is(err, os.ErrNotExist) {
+	if r, ok := s.recent[id]; ok {
+		s.mu.Unlock()
+		return proto.Clone(r.sess).(*pb.Session), nil
+	}
+	s.mu.Unlock()
+
+	handle, err := s.records.CreateSessionQuery(ctx, &query_pb.OpenSessionQueryRequest{
+		Filter: &query_pb.SessionFilter{SessionId: &id},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("opening Session query: %w", err)
+	}
+	defer s.records.DeleteSessionQuery(ctx, &query_pb.QueryHandle{QueryId: handle.GetQueryId()}) //nolint:errcheck
+	var found *pb.Session
+	for rec, err := range s.records.ListSession(ctx, &query_pb.PullSessionRequest{QueryId: handle.GetQueryId(), PageSize: 2}) {
+		if err != nil {
+			return nil, fmt.Errorf("reading Session row: %w", err)
+		}
+		if found != nil {
+			return nil, fmt.Errorf("session key %s matched more than one row", id)
+		}
+		found = rec
+	}
+	if found == nil {
 		return nil, ErrSessionNotFound
 	}
-	if err != nil {
-		return nil, err
-	}
-	var sess Session
-	if err := json.Unmarshal(data, &sess); err != nil {
-		return nil, fmt.Errorf("decode session %s: %w", id, err)
-	}
-	return &sess, nil
+	return found, nil
 }
 
-// write replaces the session file atomically (temp file + rename).
-func (s *SessionStore) write(sess *Session) error {
-	p, err := s.path(sess.ID)
-	if err != nil {
-		return err
+func toRecord(sess *Session, nowMs int64) *pb.Session {
+	rec := &pb.Session{
+		SessionId:       sess.ID,
+		TenantNamespace: sess.Tenant,
+		Owner:           sess.Owner,
+		Context:         append([]string{}, sess.Context...),
+		CreatedAtMs:     sess.CreatedAt.UnixMilli(),
+		UpdatedAtMs:     nowMs,
 	}
-	data, err := json.MarshalIndent(sess, "", "  ")
-	if err != nil {
-		return err
+	for _, t := range sess.Turns {
+		rec.Turns = append(rec.Turns, &pb.SessionTurn{Question: t.Question, Answer: answerToProto(t.Answer)})
 	}
-	tmp, err := os.CreateTemp(s.dir, sess.ID+".*.tmp")
-	if err != nil {
-		return err
+	return rec
+}
+
+func fromRecord(rec *pb.Session) *Session {
+	sess := &Session{
+		ID:        rec.GetSessionId(),
+		Owner:     rec.GetOwner(),
+		Tenant:    rec.GetTenantNamespace(),
+		CreatedAt: time.UnixMilli(rec.GetCreatedAtMs()).UTC(),
+		Context:   append([]string{}, rec.GetContext()...),
+		Turns:     []Turn{},
 	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return err
+	for _, t := range rec.GetTurns() {
+		sess.Turns = append(sess.Turns, Turn{Question: t.GetQuestion(), Answer: answerFromProto(t.GetAnswer())})
 	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
-		return err
-	}
-	return os.Rename(tmp.Name(), p)
+	return sess
 }

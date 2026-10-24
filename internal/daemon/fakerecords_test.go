@@ -21,14 +21,74 @@ import (
 // publish marks it), and a query over (tenant, scope, owner) lists the live
 // rows, as the real plane does with include_deleted unset.
 type fakeRecords struct {
-	mu      sync.Mutex
-	rows    map[string]*pb.ContextDocument
-	queries map[string]*query_pb.ContextDocumentFilter
-	next    int
+	mu       sync.Mutex
+	rows     map[string]*pb.ContextDocument
+	queries  map[string]*query_pb.ContextDocumentFilter
+	sessions map[string]*pb.Session
+	squeries map[string]*query_pb.SessionFilter
+	next     int
 }
 
 func newFakeRecords() *fakeRecords {
-	return &fakeRecords{rows: map[string]*pb.ContextDocument{}, queries: map[string]*query_pb.ContextDocumentFilter{}}
+	return &fakeRecords{
+		rows: map[string]*pb.ContextDocument{}, queries: map[string]*query_pb.ContextDocumentFilter{},
+		sessions: map[string]*pb.Session{}, squeries: map[string]*query_pb.SessionFilter{},
+	}
+}
+
+func (f *fakeRecords) publishSession(_ context.Context, s *pb.Session) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sessions[s.GetSessionId()] = proto.Clone(s).(*pb.Session)
+	return nil
+}
+
+func (f *fakeRecords) CreateSessionQuery(_ context.Context, req *query_pb.OpenSessionQueryRequest, _ ...grpc.CallOption) (*query_pb.QueryHandle, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.next++
+	id := fmt.Sprintf("s%d", f.next)
+	f.squeries[id] = req.GetFilter()
+	return &query_pb.QueryHandle{QueryId: id}, nil
+}
+
+func (f *fakeRecords) ListSession(_ context.Context, req *query_pb.PullSessionRequest, _ ...grpc.CallOption) iter.Seq2[*pb.Session, error] {
+	return func(yield func(*pb.Session, error) bool) {
+		f.mu.Lock()
+		filter, ok := f.squeries[req.GetQueryId()]
+		var out []*pb.Session
+		if ok {
+			for _, s := range f.sessions {
+				if s.GetDeleted() {
+					continue
+				}
+				if filter.SessionId != nil && s.GetSessionId() != *filter.SessionId {
+					continue
+				}
+				if filter.Owner != nil && s.GetOwner() != *filter.Owner {
+					continue
+				}
+				out = append(out, proto.Clone(s).(*pb.Session))
+			}
+		}
+		f.mu.Unlock()
+		if !ok {
+			yield(nil, fmt.Errorf("unknown query %q", req.GetQueryId()))
+			return
+		}
+		for _, s := range out {
+			if !yield(s, nil) {
+				return
+			}
+		}
+	}
+}
+
+func (f *fakeRecords) DeleteSessionQuery(_ context.Context, req *query_pb.QueryHandle, _ ...grpc.CallOption) (*query_pb.QueryStats, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.squeries, req.GetQueryId())
+	return &query_pb.QueryStats{}, nil
 }
 
 func (f *fakeRecords) publish(_ context.Context, d *pb.ContextDocument) error {

@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,46 +25,52 @@ func asUser(principal string) *servicemanager.Caller {
 }
 
 func TestSessionStoreRoundTrip(t *testing.T) {
-	store, err := NewSessionStore(t.TempDir())
+	ctx := context.Background()
+	rec := newFakeRecords()
+	store := NewSessionStore(rec, rec.publishSession)
+	sess, err := store.Create(ctx, "u1", acme, []string{"audience: Jody"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := store.Create("u1", acme, []string{"audience: Jody"})
+	if err := store.AppendContext(ctx, sess.ID, "u1", []string{"purpose: test"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(ctx, sess.ID, "u1", Turn{Question: "q1", Answer: Answer{Kind: "ANSWER", Answer: "a1", Provenance: "DERIVED", Sources: []string{"x.md"}}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(ctx, sess.ID, "u1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AppendContext(sess.ID, "u1", []string{"purpose: test"}); err != nil {
-		t.Fatal(err)
+	if len(got.Context) != 2 || got.Context[1] != "purpose: test" || got.Tenant != acme {
+		t.Fatalf("session = %+v", got)
 	}
-	if err := store.AppendTurn(sess.ID, "u1", Turn{Question: "q1", Answer: Answer{Kind: "ANSWER"}}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := store.Get(sess.ID, "u1")
-	if err != nil {
-		t.Fatal(err)
+	if len(got.Turns) != 1 || got.Turns[0].Question != "q1" || got.Turns[0].Answer.Kind != "ANSWER" || got.Turns[0].Answer.Sources[0] != "x.md" {
+		t.Fatalf("turns = %+v", got.Turns)
 	}
 	// Another user's session does not exist as far as they can tell.
-	if _, err := store.Get(sess.ID, "u2"); !errors.Is(err, ErrSessionNotFound) {
+	if _, err := store.Get(ctx, sess.ID, "u2"); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("Get as another user err = %v, want ErrSessionNotFound", err)
 	}
-	if err := store.AppendContext(sess.ID, "u2", []string{"x"}); !errors.Is(err, ErrSessionNotFound) {
+	if err := store.AppendContext(ctx, sess.ID, "u2", []string{"x"}); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("AppendContext as another user err = %v, want ErrSessionNotFound", err)
 	}
-	if len(got.Context) != 2 || got.Context[1] != "purpose: test" {
-		t.Fatalf("context = %v", got.Context)
-	}
-	if len(got.Turns) != 1 || got.Turns[0].Question != "q1" {
-		t.Fatalf("turns = %v", got.Turns)
+	// The session is a row in the store, not this instance's memory: a second
+	// store over the same records (another pod, or this one after a restart)
+	// reads it whole, turns and all.
+	again := NewSessionStore(rec, rec.publishSession)
+	fresh, err := again.Get(ctx, sess.ID, "u1")
+	if err != nil || len(fresh.Turns) != 1 || fresh.Turns[0].Answer.Answer != "a1" {
+		t.Fatalf("session not in the store: %+v %v", fresh, err)
 	}
 }
 
 func TestSessionStoreRejectsUnknownAndMalformedIDs(t *testing.T) {
-	store, err := NewSessionStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx := context.Background()
+	rec := newFakeRecords()
+	store := NewSessionStore(rec, rec.publishSession)
 	for _, id := range []string{"0123456789abcdef0123456789abcdef", "../../etc/passwd", ""} {
-		if _, err := store.Get(id, "u1"); !errors.Is(err, ErrSessionNotFound) {
+		if _, err := store.Get(ctx, id, "u1"); !errors.Is(err, ErrSessionNotFound) {
 			t.Errorf("Get(%q) err = %v, want ErrSessionNotFound", id, err)
 		}
 	}
@@ -151,13 +155,9 @@ func TestContextStoreReplaceAndLoad(t *testing.T) {
 // Request validation and auth are the generated wrapper's and are tested in
 // tacplus, not here.
 func TestServerRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	store, err := NewSessionStore(filepath.Join(dir, "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	p := &scriptedProvider{replies: []any{json.RawMessage(`{"kind":"ANSWER","answer":"fix now, note the rewrite","reasoning":"r","would_change_mind":"w","provenance":"DERIVED","sources":["README.md"],"missing":[]}`)}}
 	rec := newFakeRecords()
+	store := NewSessionStore(rec, rec.publishSession)
 	s := &Server{Sessions: store, Engine: &Engine{Contexts: NewContextStore(rec, rec.publish), Provider: p}}
 	ctx := context.Background()
 	jody := asUser("jody")
@@ -197,7 +197,7 @@ func TestServerRoundTrip(t *testing.T) {
 			t.Errorf("model input missing %q", want)
 		}
 	}
-	sess, err := store.Get(created.GetSessionId(), "jody")
+	sess, err := store.Get(ctx, created.GetSessionId(), "jody")
 	if err != nil || len(sess.Turns) != 1 || sess.Tenant != acme {
 		t.Fatalf("turn not persisted or tenant not kept: %v %v", sess, err)
 	}
@@ -210,12 +210,3 @@ func TestServerRoundTrip(t *testing.T) {
 	}
 }
 
-func write(t *testing.T, p, content string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}

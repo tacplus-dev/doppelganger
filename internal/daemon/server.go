@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/tacplus-dev/doppelganger/tacplus/chassis/servicemanager"
@@ -20,10 +21,15 @@ import (
 // authenticated user the gateway admitted, not used yet (every RPC is
 // RPC_FLAG_AUTH_ANY_USER).
 type Server struct {
-	// Records is the record query plane over ContextDocument (stratum) and
-	// Publish its write path (the generated topic publisher); main wires both.
-	Records contextRecords
-	Publish func(context.Context, *pb.ContextDocument) error
+	// Records is the record query plane (stratum) over ContextDocument and
+	// Session; Publish and PublishSession are their write paths (the generated
+	// topic publishers). main wires all three.
+	Records interface {
+		contextRecords
+		sessionRecords
+	}
+	Publish        func(context.Context, *pb.ContextDocument) error
+	PublishSession func(context.Context, *pb.Session) error
 	// NewProvider builds the model provider for a model alias; main wires the
 	// llmproxy client in, tests set Engine directly.
 	NewProvider func(modelAlias string) Provider
@@ -39,21 +45,19 @@ var _ sm.Handler = (*Server)(nil)
 func (s *Server) DoppelgangerGrpcImpl() fe.DoppelgangerHandler { return s }
 
 // DoppelgangerConfig is the generated service manager's config delivery, at
-// start and on every change: state_dir, repo_dir and model_alias take effect
-// here. An answer in flight finishes with the engine it started with.
+// start and on every change: model_alias takes effect here. An answer in
+// flight finishes with the engine it started with.
 func (s *Server) DoppelgangerConfig(cfg *pb.Config) error {
-	sessions, err := NewSessionStore(cfg.GetStateDir())
-	if err != nil {
-		return err
-	}
 	if s.NewProvider == nil {
 		return errors.New("doppelganger: no provider constructor wired")
 	}
+	if s.Records == nil || s.Publish == nil || s.PublishSession == nil {
+		return errors.New("doppelganger: no record plane wired")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Sessions = sessions
-	if s.Records == nil || s.Publish == nil {
-		return errors.New("doppelganger: no record plane wired")
+	if s.Sessions == nil {
+		s.Sessions = NewSessionStore(s.Records, s.PublishSession)
 	}
 	s.Engine = &Engine{Contexts: NewContextStore(s.Records, s.Publish), Provider: s.NewProvider(cfg.GetModelAlias())}
 	return nil
@@ -120,26 +124,26 @@ func callerIdentity(caller *servicemanager.Caller) (user, tenant string, err err
 	return user, tenant, nil
 }
 
-func (s *Server) CreateSession(_ context.Context, caller *servicemanager.Caller, req *pb.CreateSessionRequest) (*pb.CreateSessionResponse, error) {
+func (s *Server) CreateSession(ctx context.Context, caller *servicemanager.Caller, req *pb.CreateSessionRequest) (*pb.CreateSessionResponse, error) {
 	user, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
 	}
 	sessions, _ := s.current()
-	sess, err := sessions.Create(user, tenant, req.GetContext())
+	sess, err := sessions.Create(ctx, user, tenant, req.GetContext())
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &pb.CreateSessionResponse{SessionId: sess.ID}, nil
 }
 
-func (s *Server) UpdateSession(_ context.Context, caller *servicemanager.Caller, req *pb.UpdateSessionRequest) (*pb.UpdateSessionResponse, error) {
+func (s *Server) UpdateSession(ctx context.Context, caller *servicemanager.Caller, req *pb.UpdateSessionRequest) (*pb.UpdateSessionResponse, error) {
 	user, _, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
 	}
 	sessions, _ := s.current()
-	if err := sessions.AppendContext(req.GetSessionId(), user, req.GetContext()); err != nil {
+	if err := sessions.AppendContext(ctx, req.GetSessionId(), user, req.GetContext()); err != nil {
 		return nil, sessionError(err)
 	}
 	return &pb.UpdateSessionResponse{}, nil
@@ -187,7 +191,7 @@ func (s *Server) GenerateAnswer(ctx context.Context, caller *servicemanager.Call
 		return nil, err
 	}
 	sessions, engine := s.current()
-	sess, err := sessions.Get(req.GetSessionId(), user)
+	sess, err := sessions.Get(ctx, req.GetSessionId(), user)
 	if err != nil {
 		return nil, sessionError(err)
 	}
@@ -195,23 +199,42 @@ func (s *Server) GenerateAnswer(ctx context.Context, caller *servicemanager.Call
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
-	if err := sessions.AppendTurn(sess.ID, user, Turn{Question: req.GetQuestion(), Answer: a}); err != nil {
+	if err := sessions.AppendTurn(ctx, sess.ID, user, Turn{Question: req.GetQuestion(), Answer: a}); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return &pb.GenerateAnswerResponse{
-		Kind:            pb.AnswerKind(pb.AnswerKind_value["ANSWER_KIND_"+a.Kind]),
-		Answer:          a.Answer,
-		Reasoning:       a.Reasoning,
-		WouldChangeMind: a.WouldChangeMind,
-		Provenance:      pb.Provenance(pb.Provenance_value["PROVENANCE_"+a.Provenance]),
-		Sources:         a.Sources,
-		Missing:         a.Missing,
-	}, nil
+	return answerToProto(a), nil
 }
 
 func sessionError(err error) error {
 	if errors.Is(err, ErrSessionNotFound) {
 		return status.Error(codes.NotFound, err.Error())
 	}
-	return status.Error(codes.Internal, err.Error())
+	return status.Error(codes.Unavailable, err.Error())
+}
+
+// answerToProto and answerFromProto are the two halves of one mapping: the
+// engine's Answer is what the model produced, GenerateAnswerResponse is what
+// the caller receives and what a session row remembers.
+func answerToProto(a Answer) *pb.GenerateAnswerResponse {
+	return &pb.GenerateAnswerResponse{
+		Kind:            pb.AnswerKind(pb.AnswerKind_value["ANSWER_KIND_"+a.Kind]),
+		Answer:          a.Answer,
+		Reasoning:       a.Reasoning,
+		WouldChangeMind: a.WouldChangeMind,
+		Provenance:      pb.Provenance(pb.Provenance_value["PROVENANCE_"+a.Provenance]),
+		Sources:         append([]string{}, a.Sources...),
+		Missing:         append([]string{}, a.Missing...),
+	}
+}
+
+func answerFromProto(r *pb.GenerateAnswerResponse) Answer {
+	return Answer{
+		Kind:            strings.TrimPrefix(r.GetKind().String(), "ANSWER_KIND_"),
+		Answer:          r.GetAnswer(),
+		Reasoning:       r.GetReasoning(),
+		WouldChangeMind: r.GetWouldChangeMind(),
+		Provenance:      strings.TrimPrefix(r.GetProvenance().String(), "PROVENANCE_"),
+		Sources:         append([]string{}, r.GetSources()...),
+		Missing:         append([]string{}, r.GetMissing()...),
+	}
 }

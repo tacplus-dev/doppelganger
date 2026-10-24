@@ -3,9 +3,9 @@
 
 // doppelganger answers questions as the person a tenant's context describes,
 // as a fleet service: client-facing through the gateway, the model through
-// llmproxy, the context in stratum. Configuration (state_dir, model_alias)
+// llmproxy, context and sessions in stratum. Configuration (model_alias)
 // arrives from the fleet's config state; nothing is read from flags or the
-// environment.
+// environment, and nothing is kept on disk.
 //
 // The local client that authenticates as a user and calls this service through
 // the gateway is a separate program (not written yet).
@@ -44,15 +44,16 @@ func run() error {
 	defer s.Close()
 
 	// Run blocks: it serves the generated gRPC surface, delivers the config
-	// (state_dir, model_alias) to the handler at start and on change, reports
+	// (model_alias) to the handler at start and on change, reports
 	// health, and returns on shutdown.
 	return s.Run(&daemon.Server{
 		NewProvider: func(modelAlias string) daemon.Provider {
 			return &daemon.LlmProxy{Client: s.Grpc().Clients().Services().LlmProxyClient(), ModelAlias: modelAlias}
 		},
-		// Context: read through the record query plane stratum hosts, written
-		// by publishing ContextDocument onto its topic.
-		Records: s.Grpc().Clients().Vservices().RecordMapClient(),
-		Publish: s.CreateDoppelgangerContextDocumentBusStreamPublisher(),
+		// Context and sessions: read through the record query plane stratum
+		// hosts, written by publishing each record onto its topic.
+		Records:        s.Grpc().Clients().Vservices().RecordMapClient(),
+		Publish:        s.CreateDoppelgangerContextDocumentBusStreamPublisher(),
+		PublishSession: s.CreateDoppelgangerSessionBusStreamPublisher(),
 	})
 }

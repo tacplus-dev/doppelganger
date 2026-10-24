@@ -27,28 +27,31 @@ option (spec.service) = {name: "doppelganger", tenant_owned: true};
 // one of its callers because this line exists.
 option (spec.grpc_s2s_client) = {service: "llmproxy.LlmProxy"};
 
-// Context lives in stratum as ContextDocument records: this service reads its
-// own rows back through the record query plane (the grant half is the record's
-// s2s_read below). Nothing is kept on the instance's disk.
+// Context and sessions live in stratum as ContextDocument and Session records:
+// this service reads its own rows back through the record query plane (the
+// grant half is each record's s2s_read below). Nothing is kept on the
+// instance's disk.
 option (spec.record_read) = {record: "doppelganger.ContextDocument"};
+option (spec.record_read) = {record: "doppelganger.Session"};
 
 message Config {
   option (spec.grpc_config) = {service_name: "doppelganger"};
 
-  // The topic tacplus synthesizes from ContextDocument's (spec.record): this
-  // service's durable write path. A record has no write RPC; it reaches stratum
-  // on stratum's own subscription to this topic, so publishing here IS writing
-  // the record (the same shape as letsencrypt's LetsEncryptCert).
+  // The topics tacplus synthesizes from the (spec.record)s below: this
+  // service's durable write paths. A record has no write RPC; it reaches
+  // stratum on stratum's own subscription to its topic, so publishing here IS
+  // writing the record (the same shape as letsencrypt's LetsEncryptCert).
   option (spec.event_publish) = {
     topic_ref: "doppelganger.ContextDocumentBus.stream"
   };
+  option (spec.event_publish) = {
+    topic_ref: "doppelganger.SessionBus.stream"
+  };
 
-  // 1 was repo_dir: context on the instance's disk, before it moved to stratum.
-  reserved 1;
-  reserved "repo_dir";
-  // state_dir holds session state (context and turns), one file per session.
-  // Sessions are the next thing to move into stratum.
-  string state_dir = 2 [(spec.assert_required) = true];
+  // 1 was repo_dir and 2 state_dir: context and sessions on the instance's
+  // disk, before both moved to stratum.
+  reserved 1, 2;
+  reserved "repo_dir", "state_dir";
   // model_alias is the llmproxy alias answers are generated with.
   string model_alias = 3 [(spec.assert_required) = true];
 }
@@ -146,6 +149,51 @@ message UpdateTenantContextRequest {
 message UpdateTenantContextResponse {
   int32 file_count = 1;
   int64 byte_count = 2;
+}
+
+// SessionTurn is one question and the answer given, replayed into every later
+// question of the session so that pushback is answered, not repeated.
+message SessionTurn {
+  string question = 1 [(spec.assert_max_size) = 65536];
+  GenerateAnswerResponse answer = 2;
+}
+
+// Session is one user's conversation: the context they gave and the turns so
+// far. Owned by the user who opened it; doppelganger is the only writer and
+// reader; stratum stores it. Every change republishes the whole session.
+message Session {
+  option (spec.record) = {
+    key: "session_id"
+    owner: "owner"
+    s2s: {auth_services: ["doppelganger"]}
+    s2s_subscribe: {auth_services: ["stratum"]}
+    s2s_read: {auth_services: ["doppelganger"]}
+    // A conversation is live for days, not months: thirty days idle before
+    // eviction (nothing is lost), deleted rows purged after thirty.
+    residency: {idle_seconds: 2592000 deleted_max_age_seconds: 2592000}
+  };
+
+  string session_id = 1 [
+    (spec.indexed) = true,
+    (spec.assert_required) = true,
+    (spec.assert_min_size) = 32,
+    (spec.assert_max_size) = 64
+  ];
+  // tenant_namespace is the row's owning namespace (/tenants/<t>), the tenant
+  // whose context the session reads.
+  string tenant_namespace = 2 [
+    (spec.store_namespace) = true,
+    (spec.assert_required) = true,
+    (spec.assert_max_size) = 512,
+    (spec.query_field) = {op: QUERY_OP_EQ}
+  ];
+  // owner is the principal of the user who opened the session.
+  string owner = 3 [(spec.assert_required) = true, (spec.assert_max_size) = 512, (spec.query_field) = {op: QUERY_OP_EQ}];
+  repeated string context = 4 [(spec.assert_max_size) = 1000, (spec.assert_element_max_size) = 65536];
+  repeated SessionTurn turns = 5 [(spec.assert_max_size) = 1000];
+  int64 created_at_ms = 6;
+  int64 updated_at_ms = 7;
+  bool deleted = 8 [(spec.deleted_flag) = true];
 }
 
 message GenerateAnswerRequest {
