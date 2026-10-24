@@ -323,3 +323,13 @@ finish the open items above, then size the tacplus work so it does not disturb t
   (stratum cold-started). `ask --as alpha` reaches doppelganger (per-service token accepted) and fails cleanly on the
   context repo: `/var/lib/doppelganger/repo: no such file or directory` — the open fleet-layer question of how the
   context repo is populated (git-sync?) plus llmproxy's federation ids, both Jody's call.
+- 2026-10-24 ~15:40Z (Jody's decisions): stratum runs 3 nodes (2 is below its durability floor: a node restoring from
+  peers needs two durable copies besides itself; the hot-restore guard is right, 2 nodes is just unsupported).
+  Doppelganger context comes in THROUGH THE SERVICE (option 2), stored on the instance's disk until stratum is ported,
+  then in stratum. Doppelganger is TENANT-OWNED (one instance per tenant, shared by its users) with two context
+  layers: the tenant's (UpdateTenantContext, grant DOPPELGANGER_DOPPELGANGER_UPDATE_TENANT_CONTEXT, which the
+  tenant ceiling and tenant-admin pairs now carry) and each user's own (UpdateContext, any user). Sessions belong to
+  their opener. doppelganger 6e5d65c; gateway fde72dd (registry test: tenantecho + doppelganger); client gets
+  `context push DIR [--tenant]`. Every image is now built on tacplus 8f6e972 and restarted (all 1/1); operator
+  re-applied → doppelganger-alpha0/beta0. Found: deploy/build-operator.sh picks `tacplus` from PATH unless TACPLUS is
+  set, and ~/.local/bin/tacplus is a stale local build (version 0.0.0) — run it with TACPLUS=<pinned build>.
