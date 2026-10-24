@@ -373,3 +373,10 @@ finish the open items above, then size the tacplus work so it does not disturb t
   the KERNEL carries every service's typed Config, so a Config field change needs a kernel image rebuild (bundle
   fields the kernel's types do not know are dropped on parse) — same class as the gateway/proto rule. Images for
   kernel, stratum (new subscription), eventbus (new topic), doppelganger building; operator rebuild + apply next.
+- 2026-10-24 ~18:45Z: **CONTEXT IS IN STRATUM AND SURVIVES THE POD.** With kernel, stratum, eventbus, doppelganger
+  rebuilt and the operator re-applied (14/14 pods 1/1): `context push --tenant` (9 files, 184 KB) and a user push
+  publish ContextDocument rows; stratum's RecordMap logs Create/List/Delete ContextDocument queries on every answer;
+  after `rollout restart deploy/doppelganger-alpha0` with NO re-push, `ask --as alpha` still reaches Anthropic (401,
+  federation ids). Beta's instance still has no context. llmproxy resolves `claude-sonnet` from Config.models now
+  that the kernel's types know the field. Waiting on Jody: the four federation ids (see 17:05Z entry and the recap);
+  next move: sessions (state_dir) into stratum the same way, then nothing is on any instance's disk.
