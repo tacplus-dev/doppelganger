@@ -266,3 +266,7 @@ finish the open items above, then size the tacplus work so it does not disturb t
   and left the minter package unmapped, so services minted for audiences kernel never serves. Fixed in tacplus 1eca5e4
   (DiscoverStateRoot carries the root's host label; the minter package maps to its host; Go/Java/Rust/TS). Images
   rebuilding at that pin; redeploy next. deploy/secrets.sh creates the (empty) oauth pipeline secret the chart expects.
+- 2026-10-24 ~06:40Z: after the audience fix, opa, tenantecho-alpha, tenantecho-beta and doppelganger are 1/1 and SERVING
+  (doppelganger needed /var/lib/doppelganger owned by its user in the image). Java (kernel ok; stratum, eventbus) also
+  pinned TLS identity "servicehealth" when dialing kernel's state store → fixed in tacplus 89f3393 (Java service manager
+  uses the health root's host label); Java images rebuilding.
