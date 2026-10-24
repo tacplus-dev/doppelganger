@@ -7,17 +7,34 @@ import "sys/spec.proto";
 option (spec.service) = {name: "doppelganger"};
 
 // ---------------------------------------------------------------------------
-// Doppelganger C2D interface (client-to-daemon).
+// Doppelganger: a fleet service that answers questions on Jody's behalf from
+// the jody context repo. Its only role is to answer. Callers open a session,
+// give context (who they are, who the answer is for, what it is for), and ask.
+// Pushback is just the next GenerateAnswer in the same session: it re-answers
+// with whatever the caller added; it does not repeat itself.
 //
-// Doppelganger answers questions on Jody's behalf from the ~/workspace/jody
-// repo. Its only role is to answer. Callers open a session, give context
-// (who they are, who the answer is for, what it is for), and ask. Pushback is
-// just the next GenerateAnswer in the same session: the daemon re-answers with whatever
-// the caller added; it does not repeat itself.
-//
-// Caller context is on the honor system for now. C2D is unauthenticated;
-// filesystem permissions on the socket are the boundary.
+// Client-facing (C2S) through the gateway: the caller is an authenticated user
+// of the fleet (RPC_FLAG_AUTH_ANY_USER on every RPC — this is a personal
+// service, the fleet's users are its users). The model is reached through
+// llmproxy over S2S; doppelganger holds no model credential.
 // ---------------------------------------------------------------------------
+
+// The model call goes through llmproxy; the fleet build admits doppelganger as
+// one of its callers because this line exists.
+option (spec.grpc_s2s_client) = {service: "llmproxy.LlmProxy"};
+
+message Config {
+  option (spec.grpc_config) = {service_name: "doppelganger"};
+
+  // repo_dir is the checkout of the jody context repo the answers rest on.
+  // The deployment puts it there (a volume or an init step); this service
+  // only reads it, on every answer.
+  string repo_dir = 1 [(spec.assert_required) = true];
+  // state_dir holds session state (context and turns), one file per session.
+  string state_dir = 2 [(spec.assert_required) = true];
+  // model_alias is the llmproxy alias answers are generated with.
+  string model_alias = 3 [(spec.assert_required) = true];
+}
 
 message CreateSessionRequest {
   // Optional context given at creation. More can be added with UpdateSession.
@@ -69,9 +86,23 @@ message GenerateAnswerResponse {
 }
 
 service Doppelganger {
-  option (spec.service_c2d) = {socket_path: "/tmp/doppelganger.sock"};
+  option (spec.service_c2s) = {};
 
-  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
-  rpc UpdateSession(UpdateSessionRequest) returns (UpdateSessionResponse);
-  rpc GenerateAnswer(GenerateAnswerRequest) returns (GenerateAnswerResponse);
+  // Opens a question session. Give context up front: who you are, who the
+  // answer is for, and what it is for. Returns the session_id every later
+  // call needs.
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse) {
+    option (spec.rpc) = {flags: [RPC_FLAG_AUTH_ANY_USER]};
+  }
+  // Adds context to an open session, for example what NEEDS_CONTEXT asked
+  // for. Nothing is answered here; ask again afterwards.
+  rpc UpdateSession(UpdateSessionRequest) returns (UpdateSessionResponse) {
+    option (spec.rpc) = {flags: [RPC_FLAG_AUTH_ANY_USER]};
+  }
+  // Answers one question in a session as Jody would, from the jody context
+  // repo, with reasoning, provenance and sources. Asking again in the same
+  // session with more context is how to push back; it does not repeat itself.
+  rpc GenerateAnswer(GenerateAnswerRequest) returns (GenerateAnswerResponse) {
+    option (spec.rpc) = {flags: [RPC_FLAG_AUTH_ANY_USER]};
+  }
 }

@@ -1,5 +1,9 @@
+kind: service
 language: go
 src: proto
+# the model is reached through llmproxy (S2S); its contract comes through the registry.
+depends:
+  - llmproxy
 # pkg is derived from go.mod (the org name has a hyphen, which pkg cannot carry).
 # A derived Go package is <module>/tacplus, so the output segment must be "tacplus".
 output-dir: tacplus

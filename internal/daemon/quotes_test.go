@@ -1,7 +1,7 @@
 package daemon
 
 import (
-	"os"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -53,16 +53,9 @@ func TestQuoteRejectionNamesTheQuote(t *testing.T) {
 func TestEngineRetriesFabricatedQuote(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir+"/repo/life.md", quoteRepo)
-	fake := dir + "/claude"
-	write(t, fake, `#!/bin/sh
-if grep -q "previous answer was rejected" ; then
-  echo '{"structured_output":{"kind":"ANSWER","answer":"Omit education.","reasoning":"","would_change_mind":"","provenance":"DERIVED","sources":[],"missing":[]}}'
-else
-  echo '{"structured_output":{"kind":"ANSWER","answer":"He said \"Leave education off outward material, and never claim a degree.\"","reasoning":"","would_change_mind":"","provenance":"QUOTED","sources":[],"missing":[]}}'
-fi
-`)
-	chmod(t, fake)
-	e := &Engine{RepoDir: dir + "/repo", Provider: &ClaudeCLI{Bin: fake}}
+	misquote := answerWith("QUOTED", `He said "Leave education off outward material, and never claim a degree."`)
+	p := &scriptedProvider{replies: []any{misquote, answerWith("DERIVED", "Omit education.")}}
+	e := &Engine{RepoDir: dir + "/repo", Provider: p}
 	a, err := e.Answer(t.Context(), &Session{}, "education?")
 	if err != nil || a.Answer != "Omit education." {
 		t.Fatalf("answer = %q, err = %v", a.Answer, err)
@@ -74,13 +67,9 @@ fi
 func TestEnginePersistentFabricationIsStripped(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir+"/repo/life.md", quoteRepo)
-	fake := dir + "/claude"
-	write(t, fake, `#!/bin/sh
-cat >/dev/null
-echo '{"structured_output":{"kind":"ANSWER","answer":"He said \"Leave education off outward material, and never claim a degree.\" and \"better to just keep it SE.\"","reasoning":"","would_change_mind":"","provenance":"QUOTED","sources":[],"missing":[]}}'
-`)
-	chmod(t, fake)
-	e := &Engine{RepoDir: dir + "/repo", Provider: &ClaudeCLI{Bin: fake}}
+	misquote := answerWith("QUOTED", `He said "Leave education off outward material, and never claim a degree." and "better to just keep it SE."`)
+	p := &scriptedProvider{replies: []any{misquote, misquote, misquote}}
+	e := &Engine{RepoDir: dir + "/repo", Provider: p}
 	a, err := e.Answer(t.Context(), &Session{}, "education?")
 	if err != nil {
 		t.Fatal(err)
@@ -94,32 +83,9 @@ echo '{"structured_output":{"kind":"ANSWER","answer":"He said \"Leave education 
 	}
 }
 
-func chmod(t *testing.T, p string) {
-	t.Helper()
-	if err := os.Chmod(p, 0o755); err != nil {
-		t.Fatal(err)
-	}
-}
 
-// TestClaudeCLIRetriesStructuredOutputFailure: claude giving up on the schema is
-// retried, not surfaced.
-func TestClaudeCLIRetriesStructuredOutputFailure(t *testing.T) {
-	dir := t.TempDir()
-	write(t, dir+"/repo/life.md", quoteRepo)
-	fake := dir + "/claude"
-	write(t, fake, `#!/bin/sh
-cat >/dev/null
-if [ -f "`+dir+`/called" ]; then
-  echo '{"structured_output":{"kind":"ANSWER","answer":"ok","reasoning":"","would_change_mind":"","provenance":"DERIVED","sources":[],"missing":[]}}'
-else
-  touch "`+dir+`/called"
-  echo '{"is_error":true,"subtype":"error_max_structured_output_retries","result":""}'
-  exit 1
-fi
-`)
-	chmod(t, fake)
-	e := &Engine{RepoDir: dir + "/repo", Provider: &ClaudeCLI{Bin: fake}}
-	if a, err := e.Answer(t.Context(), &Session{}, "q"); err != nil || a.Answer != "ok" {
-		t.Fatalf("answer = %q, err = %v", a.Answer, err)
-	}
+// answerWith is answerJSON with a provenance.
+func answerWith(provenance, answer string) json.RawMessage {
+	b, _ := json.Marshal(Answer{Kind: "ANSWER", Answer: answer, Provenance: provenance, Sources: []string{}, Missing: []string{}})
+	return b
 }
