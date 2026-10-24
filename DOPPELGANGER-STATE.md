@@ -226,7 +226,8 @@ finish the open items above, then size the tacplus work so it does not disturb t
   reference its contract), llmproxy, doppelganger, tenantecho. Lock pushed; llmproxy admits exactly ["doppelganger"].
 - Generated from build/proto and verified: doppelganger (tests), tenantecho (tests), opa (build), letsencrypt (build),
   llmproxy (build), gateway (88 tests), oauth (104 tests, standalone), eventbus (compile), stratum (main compiles),
-  kernel (main compiles; full suite rerun in flight).
+  kernel (441 tests, 0 failures, 1 skipped). tacplus also learned to emit GcsArchiveSink only for the record store
+  (the fleet-wide pin had handed it, and the SDK dependency, to every Java service).
 - Fleet-knowledge fixed along the way: oauth's MintToken → sys minter (`minter.Minter` client); eventbus now OWNS the
   trace topic (`eventbus.TraceEventBus.trace_events`; it used to be agentsensor's); gateway tests: tenantecho is the
   live tenant-owned set, routing test takes any-user routes; kernel ConfigOverridesTest fixture uses oauth/llmproxy,
