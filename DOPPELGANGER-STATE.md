@@ -341,3 +341,13 @@ finish the open items above, then size the tacplus work so it does not disturb t
   is the "tenant level config" shape with sane defaults, no per-tenant fan-out at install. Also: ContextFile.content
   now allows 1 MiB (the default bytes cap is 32 KiB; the jody repo has an 84 KB file). Kernel + doppelganger images
   rebuilding, then restart and the context push / ask proof.
+- 2026-10-24 ~17:05Z: **ask path proven to the provider's door.** `seatrials ask --as alpha` → gateway → doppelganger-alpha
+  (tenant instance, answers from alpha's uploaded user context) → llmproxy → Anthropic, which answers 401 "x-api-key
+  header is required": the four federation ids in services/llmproxy.yaml are still empty. That is the last input and
+  it is Jody's. Beta's instance correctly has no context ("the tenant has none and the user has uploaded none").
+  tenantecho now shows its configured greeting (the config-root fix verified). Along the way: doppelganger's
+  model_alias is "claude-sonnet", the one alias llmproxy's table serves (anthropic.rs maps it to claude-sonnet-4-5 —
+  a dated id, Jody's call); a bundle change (services/*.yaml → apply) needs a kernel restart to load, only overrides
+  are live. The gateway validates proxied messages against the protos it was BUILT with, so a service proto change
+  (ContextFile.content 1 MiB) needs a gateway image rebuild too — rebuilding now, then the tenant-context push of the
+  jody repo (84 KB file) goes through.
