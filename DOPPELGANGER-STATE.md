@@ -351,3 +351,9 @@ finish the open items above, then size the tacplus work so it does not disturb t
   are live. The gateway validates proxied messages against the protos it was BUILT with, so a service proto change
   (ContextFile.content 1 MiB) needs a gateway image rebuild too — rebuilding now, then the tenant-context push of the
   jody repo (84 KB file) goes through.
+- 2026-10-24 ~17:40Z: full prompt goes through. llmproxy 24a3af2 sizes text blocks, system and the answer at 4 MiB
+  (the 32 KiB default refused a 213 KB prompt). With the tenant's whole jody repo (9 files, 184 KB) plus alpha's own
+  file uploaded, `ask --as alpha` reaches Anthropic and stops at 401 (no federation ids). Note: a per-tenant pod has
+  no volume, so uploaded context does not survive a restart until it lives in stratum; re-push after a rollout.
+  ALL 14 PODS 1/1. Waiting on Jody: the four Anthropic federation ids (services/llmproxy.yaml), and whether
+  llmproxy's alias table should move off claude-sonnet-4-5.
