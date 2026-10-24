@@ -421,3 +421,16 @@ finish the open items above, then size the tacplus work so it does not disturb t
   proto/clients/ (now excepted); a proto cannot sit at the proto root. Blocked on Jody for a real Google OAuth client
   (oauth.yaml has placeholders) and where its client_secret lives (proposed: oauth.Secrets.google_client_secret via
   oauth-pipeline-secrets, not the yaml).
+- 2026-10-24 ~22:40Z (Jody): sign-in is for ANYONE with a Google, Apple or Microsoft account; entitlements come only
+  from tenant membership (kernel/OPA), so a provider's `domains` is informational and empty. Provider config belongs
+  in the per-service config kernel serves (services/oauth.yaml → bundle → oauth's Config), not a new secrets path;
+  kernel's ConfigOverride (ConfigMap kernel-config-override) is the runtime write path if a value must stay out of
+  git. The sign-in web app is a LIBRARY with custom branding (SeaBeam's web app will use it): gateway/webapp-login
+  (`@tacplus-dev/webapp-login`: SignIn flow over two small interfaces the consumer implements with its own generated
+  clients — no generated import in the library — and mountSignIn(container, signIn, Brand)); gateway/webapp is its
+  first consumer with the default brand. PIGEON (Jody: generic, port it): shared/pigeon.proto (ToPigeon/FromPigeon,
+  kinds, PigeonTask/Result), the coop service in schematic (RequestPigeon/DiscardPigeon/GetPigeon, PigeonRun/
+  PigeonStep records, coop.PigeonMessage topic, PigeonLease), and pigeon runtimes (texas811: Rust host + Playwright
+  child, in sonar/backend). Proposed line: protocol + coop + a generic host are platform (port to tacplus-dev); the
+  texas811 kind stays SeaBeam. Awaiting Jody's confirmation of that line and provider developer accounts
+  (Google project, Apple Services ID, Microsoft app registration).
