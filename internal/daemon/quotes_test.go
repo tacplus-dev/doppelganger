@@ -83,7 +83,6 @@ func TestEnginePersistentFabricationIsStripped(t *testing.T) {
 	}
 }
 
-
 // answerWith is answerJSON with a provenance.
 func answerWith(provenance, answer string) json.RawMessage {
 	b, _ := json.Marshal(Answer{Kind: "ANSWER", Answer: answer, Provenance: provenance, Sources: []string{}, Missing: []string{}})
