@@ -173,3 +173,25 @@ finish the open items above, then size the tacplus work so it does not disturb t
   from it against build/proto. Harness rendering leaves the library (fleet layer). Module split is the follow-up.
 - Dev fleet: 13 services (kernel, opa, gateway, stratum, eventbus, kmaker, oauth, letsencrypt, blobstore, messaging,
   mailbox, llmproxy, doppelganger). Stratum already ported (Jody re-confirmed).
+
+## 2026-10-24 — every repo generates on its own through `depends`
+- kernel tests: 441 run, 0 failures (one fleet-aware assumption skipped); pushed. The one holdout was a test
+  listing `kernel.Mint/CreatePersonalPrincipal` as self-authenticating; its declaration never was
+  (`auth_services: ["*"]`, no flag), so the test now lists it as enforced.
+- tacplus (`registry-and-floor`, 250c3e1): Go state clients for sys state roots (the `Sys()` group);
+  **`depends` is transitive** (a contract's own tacplus.yaml depends are followed, each name once);
+  `hasSysState` no longer counts the injected health state (moving ServiceHealth into sys/ had switched on the
+  runtime-config subscription for every service, which only store services had).
+- Contract dependencies now declared where the proto says so: kernel → opa (opa_import); blobstore, letsencrypt,
+  messaging, mailbox → stratum (record query plane) + eventbus (topics); letsencrypt → kernel (Identity state);
+  mailbox → messaging (MessageBus.stream). Each of those repos now runs `tacplus build` alone and (Go) builds.
+- operator (library) builds, vets and tests green standalone (fc422f5). Its tacplus.yaml lists what the
+  hand-written bootstrap still names: gateway TLS mode, eventbus node role, blobstore volume groups, example config,
+  llmproxy app-service tests, and an embedded registry.json copied from the model. **That is the launch fleet's
+  composition living in a library**; it moves to the fleet deployment repo (and Skipper's tenant spec) — follow-up,
+  not done.
+- Admiral / Skipper (Jody's question, my read): same library, two callers. Admiral: namespace lifecycle + base fleet
+  in the platform namespace. Skipper: the tenant's set in the tenant namespace with namespace-scoped credentials.
+  The library needs an "external kernel at <addr>, trust this CA" input path for Skipper; today it assumes it
+  bootstraps kernel itself (that is Admiral's path). Not started.
+- gateway regeneration from fleet-dev build/proto with the new binary: in progress at time of writing.
