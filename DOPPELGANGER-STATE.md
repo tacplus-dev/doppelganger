@@ -195,3 +195,25 @@ finish the open items above, then size the tacplus work so it does not disturb t
   The library needs an "external kernel at <addr>, trust this CA" input path for Skipper; today it assumes it
   bootstraps kernel itself (that is Admiral's path). Not started.
 - gateway regeneration from fleet-dev build/proto with the new binary: in progress at time of writing.
+
+## 2026-10-24 — doppelganger is a fleet service; the proof fleet exists
+- Jody: fleet build supplies llmproxy's caller list (not runtime config). tacplus: `service_s2s
+  {auth_services_from_fleet: true}`; the fleet build stamps `auth_services` from the fleet services declaring
+  `(spec.grpc_s2s_client)` of it; standalone admits nobody. llmproxy#3 closed. Also: with `pkg` omitted the
+  project's own proto dir names the self package (also under an explicit fleet `--src`).
+- doppelganger (5111580+): `service_c2s`, every RPC `RPC_FLAG_AUTH_ANY_USER` (MCP tool descriptions required and
+  written), `(spec.grpc_s2s_client) = llmproxy.LlmProxy`, `depends: [llmproxy]`, Config {repo_dir, state_dir,
+  model_alias} delivered by the generated service manager; provider = LlmProxy over the generated client (schema in
+  the prompt until llmproxy#2); ClaudeCLI and the socket surface are gone. The LOCAL CLIENT (user token through the
+  gateway) is not written; scripts/trials.sh waits on it.
+- **fleet-seatrials** (github.com/tacplus-dev/fleet-seatrials, private): the proof fleet, 8 services (kernel, opa,
+  gateway, letsencrypt, eventbus, stratum, llmproxy, doppelganger — the closure gateway→letsencrypt→eventbus+stratum
+  forces). Stamped: `llmproxy.LlmProxy auth_services: ["doppelganger"]`; llmproxy's generated authorizer carries
+  exactly that; doppelganger and llmproxy generate and test green from its build/proto. Runs on a small cluster
+  created/destroyed per trial (Jody). fleet-dev is now redundant — ask Jody before deleting.
+- Second proof (Jody): a trivial tenant-owned service in two tenant namespaces; gateway must route each tenant's
+  call to that tenant's instance. Registered as **tenantecho** (id 103, github.com/tacplus-dev/tenantecho, public).
+- Admiral/Skipper (Jody): per-tenant namespaces; Admiral creates/deletes them and deploys the tenant's Skipper;
+  Skipper deploys the tenant's services; both use the operator library; Admiral deploys the base fleet.
+- Generator quirks noted, not fixed: every Go service hand-writes the ConfigState "not hosted" refusal and a
+  `<Svc>ConfigStateConfig` no-op (tacplus emits a config hook per gRPC service incl. the appended state service).
