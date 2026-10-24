@@ -254,3 +254,7 @@ finish the open items above, then size the tacplus work so it does not disturb t
   provider (Google client id/secret, redirect to the nip.io fqdn) so a user can log in — Jody; (3) doppelganger's context
   repo at repo_dir (a git-sync sidecar with a deploy key, fleet-layer) — until then NEEDS_CONTEXT answers; (4) the local
   client itself (oauth Session bidi + kernel CliTokenBroker, as cavalier's curl-login.sh does).
+- Jody 2026-10-24: **every service image runs under the launcher** (github.com/tacplus-dev/launcher, public, ported from
+  schematic/launcher: PID 1 that forwards signals, propagates the exit code, kills a deadlocked child on gRPC health).
+  All 11 Dockerfiles: `COPY launcher-linux-${TARGETARCH} /usr/local/bin/launcher`, `ENV LAUNCH_CMD=<svc> HEALTH_PORT=8443`
+  (kernel 5000), `ENTRYPOINT ["launcher"]`. The fleet's build image (`ci/tacplus-build:<tacplus commit>`) carries it.
