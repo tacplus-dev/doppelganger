@@ -279,3 +279,25 @@ finish the open items above, then size the tacplus work so it does not disturb t
   missing caller identity"); fixed in kernel (setPrincipal), image rebuilding. Next: tenant create/cred alpha+beta,
   login as each, ping (served_by must name the caller's tenant), ask (doppelganger → llmproxy; federation ids still
   needed from Jody for the model call itself).
+- 2026-10-24 ~07:50Z: tenants alpha and beta exist and both LOG IN through the gateway. Three findings on the way:
+  (1) kernel requires every tenant config to hold a cred_pair that can administer the tenant (a kernel.TenantAdmin
+  grant) AND every pair's grants to sit inside the tenant's `constraints.entitlements_ceiling`, which a bare
+  CreateTenant leaves empty — so `seatrials tenant create` now sets the ceiling to
+  KERNEL_TENANT_ADMIN_{GET,UPDATE}_TENANT_CONFIG and tenant pairs default to exactly those grants (tenantecho and
+  doppelganger take any authenticated user, so nothing else is needed). `tenant delete` added; kernel has no tenant
+  update RPC. (2) A kernel-minted client token carries aud "kernel"; tenantecho refused it ("token audience kernel
+  does not match target service tenantecho"). The right path already exists in generated code: client_im
+  .ClientIdentityManager.GetTokenFor(service) exchanges the access token through gateway.Mint/MintToken
+  (minter.Minter hosted by kernel) for a service token per target. The generated c2sm only accepted one token for
+  every target, so tacplus 81f9462 adds c2sm.NewWithTokenProviderFor (per-service provider; New keeps its shape);
+  seatrials now implements client_im.TokenSource for a cred pair (login = EnsureAuthenticated, saves the kernel
+  token; every call exchanges per service). Root is correctly refused by tenantecho ("/" is not tenant-scoped).
+  (3) The gateway then dialed a placeholder for `tenantecho-alpha`: its health index filed instances only under the
+  bare service id (and a mis-split SPIFFE path), while the proxy routes a tenant-owned service by
+  `<svc>-<tenant>` from the caller's token. gateway 2e31461 indexes a tenant-owned instance under that key from its
+  SPIFFE identity (`spiffe://local.dev/tenants/<t>/services/<svc>`); image building, then rollout restart.
+  Also: operator e06f0e4 (a topic's callers reach its broker) is deployed and kernel restarted; stratum-0 then refused
+  a HOT RESTORE ("only 1 of 2 instances contributed a durable copy, below min_durable_copies 2") after its earlier
+  crash loop — reset both stratum PVCs (proof data is disposable). Open for Jody: a 2-node stratum cannot recover a
+  lost node through that guard without an operator path. Fleet-side note: the fleet.lock gateway pin commit also
+  swept in the regenerated client (one commit, 2 changes).
