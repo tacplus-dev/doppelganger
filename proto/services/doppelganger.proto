@@ -58,11 +58,12 @@ message UpdateSessionRequest {
 message UpdateSessionResponse {}
 
 // ContextFile is one file of a context: a repository-relative path and its
-// content. Only Markdown (.md) is read into answers; anything else is kept
-// but ignored.
+// content (at most 1 MiB; the default cap on bytes is 32 KiB, smaller than a
+// long document). Only Markdown (.md) is read into answers; anything else is
+// kept but ignored.
 message ContextFile {
   string path    = 1 [(spec.assert_required) = true, (spec.assert_max_size) = 512];
-  bytes  content = 2;
+  bytes  content = 2 [(spec.assert_max_size) = 1048576];
 }
 
 // UpdateContextRequest replaces the calling user's own context, whole: the
