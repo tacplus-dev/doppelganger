@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"iter"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -30,9 +29,9 @@ const (
 // contextRecords is the generated record query plane's S2S half over
 // ContextDocument, as RecordMapClient implements it; stratum serves it.
 type contextRecords interface {
-	CreateContextDocumentQuery(ctx context.Context, req *query_pb.OpenContextDocumentQueryRequest, opts ...grpc.CallOption) (*query_pb.QueryHandle, error)
-	ListContextDocument(ctx context.Context, req *query_pb.PullContextDocumentRequest, opts ...grpc.CallOption) iter.Seq2[*pb.ContextDocument, error]
-	DeleteContextDocumentQuery(ctx context.Context, req *query_pb.QueryHandle, opts ...grpc.CallOption) (*query_pb.QueryStats, error)
+	// The plane's direct read: filter in, rows out, no result set, so nothing
+	// a connection failover between two calls could lose.
+	GetContextDocumentRows(ctx context.Context, req *query_pb.GetContextDocumentRowsRequest, opts ...grpc.CallOption) (*query_pb.GetContextDocumentRowsResponse, error)
 }
 
 // ContextStore is the context this instance answers from, as ContextDocument
@@ -169,22 +168,24 @@ func (c *ContextStore) list(ctx context.Context, tenant, scope, owner string) ([
 		return r.docs, nil
 	}
 	c.mu.Unlock()
-	handle, err := c.records.CreateContextDocumentQuery(ctx, &query_pb.OpenContextDocumentQueryRequest{
+	resp, err := c.records.GetContextDocumentRows(ctx, &query_pb.GetContextDocumentRowsRequest{
 		Filter: &query_pb.ContextDocumentFilter{TenantNamespace: &tenant, Scope: &scope, Owner: &owner},
+		Limit:  maxContextDocuments,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("opening ContextDocument query: %w", err)
+		return nil, fmt.Errorf("reading ContextDocument rows: %w", err)
 	}
-	defer c.records.DeleteContextDocumentQuery(ctx, &query_pb.QueryHandle{QueryId: handle.GetQueryId()}) //nolint:errcheck
-	var docs []*pb.ContextDocument
-	for d, err := range c.records.ListContextDocument(ctx, &query_pb.PullContextDocumentRequest{QueryId: handle.GetQueryId(), PageSize: 256}) {
-		if err != nil {
-			return nil, fmt.Errorf("reading ContextDocument rows: %w", err)
-		}
-		docs = append(docs, d)
+	if resp.GetTruncated() {
+		// A context larger than the direct read's bound is a result set's job;
+		// answering from part of it would be answering from the wrong context.
+		return nil, fmt.Errorf("context %s/%s/%s holds %d documents, more than the %d a read returns", tenant, scope, owner, resp.GetTotalCount(), maxContextDocuments)
 	}
-	return docs, nil
+	return resp.GetItems(), nil
 }
+
+// maxContextDocuments bounds one context's read: the direct read's cap, and
+// more files than any doppelganger context has needed.
+const maxContextDocuments = 1000
 
 // documentID is the row a file lands on: a stable digest of where it sits.
 func documentID(tenant, scope, owner, path string) string {

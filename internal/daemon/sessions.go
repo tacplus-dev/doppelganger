@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"iter"
 	"regexp"
 	"sync"
 	"time"
@@ -47,9 +46,8 @@ var sessionIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // sessionRecords is the generated record query plane's S2S half over Session.
 type sessionRecords interface {
-	CreateSessionQuery(ctx context.Context, req *query_pb.OpenSessionQueryRequest, opts ...grpc.CallOption) (*query_pb.QueryHandle, error)
-	ListSession(ctx context.Context, req *query_pb.PullSessionRequest, opts ...grpc.CallOption) iter.Seq2[*pb.Session, error]
-	DeleteSessionQuery(ctx context.Context, req *query_pb.QueryHandle, opts ...grpc.CallOption) (*query_pb.QueryStats, error)
+	// The plane's direct read: filter in, rows out, no result set.
+	GetSessionRows(ctx context.Context, req *query_pb.GetSessionRowsRequest, opts ...grpc.CallOption) (*query_pb.GetSessionRowsResponse, error)
 }
 
 // recentTTL bounds the write-through cache below: a session this instance
@@ -157,27 +155,23 @@ func (s *SessionStore) read(ctx context.Context, id string) (*pb.Session, error)
 	}
 	s.mu.Unlock()
 
-	handle, err := s.records.CreateSessionQuery(ctx, &query_pb.OpenSessionQueryRequest{
+	// Limit 2, not 1: the key is unique, so a second row means the read cannot
+	// be trusted, and asking for one row could not tell the difference.
+	resp, err := s.records.GetSessionRows(ctx, &query_pb.GetSessionRowsRequest{
 		Filter: &query_pb.SessionFilter{SessionId: &id},
+		Limit:  2,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("opening Session query: %w", err)
+		return nil, fmt.Errorf("reading Session row: %w", err)
 	}
-	defer s.records.DeleteSessionQuery(ctx, &query_pb.QueryHandle{QueryId: handle.GetQueryId()}) //nolint:errcheck
-	var found *pb.Session
-	for rec, err := range s.records.ListSession(ctx, &query_pb.PullSessionRequest{QueryId: handle.GetQueryId(), PageSize: 2}) {
-		if err != nil {
-			return nil, fmt.Errorf("reading Session row: %w", err)
-		}
-		if found != nil {
-			return nil, fmt.Errorf("session key %s matched more than one row", id)
-		}
-		found = rec
-	}
-	if found == nil {
+	switch len(resp.GetItems()) {
+	case 0:
 		return nil, ErrSessionNotFound
+	case 1:
+		return resp.GetItems()[0], nil
+	default:
+		return nil, fmt.Errorf("session key %s matched more than one row", id)
 	}
-	return found, nil
 }
 
 func toRecord(sess *Session, nowMs int64) *pb.Session {

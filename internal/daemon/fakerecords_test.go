@@ -5,8 +5,6 @@ package daemon
 
 import (
 	"context"
-	"fmt"
-	"iter"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -23,16 +21,13 @@ import (
 type fakeRecords struct {
 	mu       sync.Mutex
 	rows     map[string]*pb.ContextDocument
-	queries  map[string]*query_pb.ContextDocumentFilter
 	sessions map[string]*pb.Session
-	squeries map[string]*query_pb.SessionFilter
-	next     int
 }
 
 func newFakeRecords() *fakeRecords {
 	return &fakeRecords{
-		rows: map[string]*pb.ContextDocument{}, queries: map[string]*query_pb.ContextDocumentFilter{},
-		sessions: map[string]*pb.Session{}, squeries: map[string]*query_pb.SessionFilter{},
+		rows:     map[string]*pb.ContextDocument{},
+		sessions: map[string]*pb.Session{},
 	}
 }
 
@@ -43,52 +38,47 @@ func (f *fakeRecords) publishSession(_ context.Context, s *pb.Session) error {
 	return nil
 }
 
-func (f *fakeRecords) CreateSessionQuery(_ context.Context, req *query_pb.OpenSessionQueryRequest, _ ...grpc.CallOption) (*query_pb.QueryHandle, error) {
+func (f *fakeRecords) GetSessionRows(_ context.Context, req *query_pb.GetSessionRowsRequest, _ ...grpc.CallOption) (*query_pb.GetSessionRowsResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.next++
-	id := fmt.Sprintf("s%d", f.next)
-	f.squeries[id] = req.GetFilter()
-	return &query_pb.QueryHandle{QueryId: id}, nil
-}
-
-func (f *fakeRecords) ListSession(_ context.Context, req *query_pb.PullSessionRequest, _ ...grpc.CallOption) iter.Seq2[*pb.Session, error] {
-	return func(yield func(*pb.Session, error) bool) {
-		f.mu.Lock()
-		filter, ok := f.squeries[req.GetQueryId()]
-		var out []*pb.Session
-		if ok {
-			for _, s := range f.sessions {
-				if s.GetDeleted() {
-					continue
-				}
-				if filter.SessionId != nil && s.GetSessionId() != *filter.SessionId {
-					continue
-				}
-				if filter.Owner != nil && s.GetOwner() != *filter.Owner {
-					continue
-				}
-				out = append(out, proto.Clone(s).(*pb.Session))
-			}
+	filter := req.GetFilter()
+	var out []*pb.Session
+	for _, s := range f.sessions {
+		if s.GetDeleted() && !req.GetIncludeDeleted() {
+			continue
 		}
-		f.mu.Unlock()
-		if !ok {
-			yield(nil, fmt.Errorf("unknown query %q", req.GetQueryId()))
-			return
+		if filter.SessionId != nil && s.GetSessionId() != *filter.SessionId {
+			continue
 		}
-		for _, s := range out {
-			if !yield(s, nil) {
-				return
-			}
+		if filter.Owner != nil && s.GetOwner() != *filter.Owner {
+			continue
 		}
+		out = append(out, proto.Clone(s).(*pb.Session))
 	}
+	r := rowsOf(out, req.GetLimit())
+	return &query_pb.GetSessionRowsResponse{Items: r.items, TotalCount: r.total, Truncated: r.truncated}, nil
 }
 
-func (f *fakeRecords) DeleteSessionQuery(_ context.Context, req *query_pb.QueryHandle, _ ...grpc.CallOption) (*query_pb.QueryStats, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.squeries, req.GetQueryId())
-	return &query_pb.QueryStats{}, nil
+// rowsOf applies the plane's limit the way stratum does: default 100, at most
+// 1000, total and truncated reported.
+func rowsOf[T any](all []T, limit int32) *rows[T] {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	n := int(limit)
+	if n > len(all) {
+		n = len(all)
+	}
+	return &rows[T]{items: all[:n], total: int64(len(all)), truncated: n < len(all)}
+}
+
+type rows[T any] struct {
+	items     []T
+	total     int64
+	truncated bool
 }
 
 func (f *fakeRecords) publish(_ context.Context, d *pb.ContextDocument) error {
@@ -106,55 +96,28 @@ func (f *fakeRecords) seed(tenant, scope, owner, path, content string) {
 	})
 }
 
-func (f *fakeRecords) CreateContextDocumentQuery(_ context.Context, req *query_pb.OpenContextDocumentQueryRequest, _ ...grpc.CallOption) (*query_pb.QueryHandle, error) {
+func (f *fakeRecords) GetContextDocumentRows(_ context.Context, req *query_pb.GetContextDocumentRowsRequest, _ ...grpc.CallOption) (*query_pb.GetContextDocumentRowsResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.next++
-	id := fmt.Sprintf("q%d", f.next)
-	f.queries[id] = req.GetFilter()
-	return &query_pb.QueryHandle{QueryId: id}, nil
-}
-
-func (f *fakeRecords) ListContextDocument(_ context.Context, req *query_pb.PullContextDocumentRequest, _ ...grpc.CallOption) iter.Seq2[*pb.ContextDocument, error] {
-	return func(yield func(*pb.ContextDocument, error) bool) {
-		f.mu.Lock()
-		filter, ok := f.queries[req.GetQueryId()]
-		var out []*pb.ContextDocument
-		if ok {
-			for _, d := range f.rows {
-				if d.GetDeleted() {
-					continue
-				}
-				if filter.TenantNamespace != nil && d.GetTenantNamespace() != *filter.TenantNamespace {
-					continue
-				}
-				if filter.Scope != nil && d.GetScope() != *filter.Scope {
-					continue
-				}
-				if filter.Owner != nil && d.GetOwner() != *filter.Owner {
-					continue
-				}
-				out = append(out, proto.Clone(d).(*pb.ContextDocument))
-			}
+	filter := req.GetFilter()
+	var out []*pb.ContextDocument
+	for _, d := range f.rows {
+		if d.GetDeleted() && !req.GetIncludeDeleted() {
+			continue
 		}
-		f.mu.Unlock()
-		if !ok {
-			yield(nil, fmt.Errorf("unknown query %q", req.GetQueryId()))
-			return
+		if filter.TenantNamespace != nil && d.GetTenantNamespace() != *filter.TenantNamespace {
+			continue
 		}
-		for _, d := range out {
-			if !yield(d, nil) {
-				return
-			}
+		if filter.Scope != nil && d.GetScope() != *filter.Scope {
+			continue
 		}
+		if filter.Owner != nil && d.GetOwner() != *filter.Owner {
+			continue
+		}
+		out = append(out, proto.Clone(d).(*pb.ContextDocument))
 	}
-}
-
-func (f *fakeRecords) DeleteContextDocumentQuery(_ context.Context, req *query_pb.QueryHandle, _ ...grpc.CallOption) (*query_pb.QueryStats, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.queries, req.GetQueryId())
-	return &query_pb.QueryStats{}, nil
+	r := rowsOf(out, req.GetLimit())
+	return &query_pb.GetContextDocumentRowsResponse{Items: r.items, TotalCount: r.total, Truncated: r.truncated}, nil
 }
 
 // live is the store's live rows for one context, by path.
