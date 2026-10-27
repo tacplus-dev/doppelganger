@@ -3,7 +3,7 @@
 #
 # Release image: the pre-built static doppelganger binary on a minimal base. The binary
 # is built by the fleet's image pipeline against the fleet's merged protos.
-ARG BASE_IMAGE=alpine:3.22
+ARG BASE_IMAGE=alpine:3.24
 FROM ${BASE_IMAGE}
 ARG VERSION=0.0.0
 ARG VCS_REF=local
