@@ -12,6 +12,13 @@ build:
 test:
     go test ./internal/...
 
+# What the looper (and a person before pushing) runs: generate, then format, vet, build, test.
+gates: tacplus
+    test -z "$(gofmt -l cmd internal)"
+    go vet ./cmd/... ./internal/...
+    go build ./cmd/... ./internal/...
+    go test ./internal/...
+
 install:
     go install ./cmd/doppelganger
 
