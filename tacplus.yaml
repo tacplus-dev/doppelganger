@@ -1,4 +1,4 @@
-tacplus: "2.4"
+tacplus: "2.5"
 kind: service
 language: go
 src: proto

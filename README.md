@@ -6,8 +6,10 @@ to answer. Design and rules: `~/workspace/jody/agents.md`, "An agent that repres
 ## Shape
 
 - A fleet service: the tacplus **C2S** service `Doppelganger`, **tenant-owned** (one instance
-  per tenant, shared by that tenant's users; the gateway routes each caller to theirs), reached
-  through the fleet's gateway by an authenticated user of the tenant. The generated service
+  per tenant, shared by that tenant's users), reached through the fleet's gateway by an
+  authenticated user of the tenant. Every request names its target tenant's tid in `tenant`
+  (each rpc's `route_field`, tacplus 2.5); the gateway routes it to that tenant's instance, and
+  only members of that tenant (and `/system`) are let in. The generated service
   manager (`tacplus/s2sm`) serves it; `internal/daemon/server.go` is only the handler.
 - The model is reached through **llmproxy** over S2S with doppelganger's own identity
   (`depends: [llmproxy]`, `(spec.grpc_s2s_client)`); the fleet build admits doppelganger as a

@@ -13,12 +13,13 @@ option (spec.service) = {name: "doppelganger", tenant_owned: true};
 // Pushback is just the next GenerateAnswer in the same session: it re-answers
 // with whatever the caller added; it does not repeat itself.
 //
-// One instance per tenant (tenant_owned), shared by that tenant's users; the
-// gateway routes each caller to their tenant's instance. Client-facing (C2S):
-// the caller is an authenticated user of the tenant. Answers rest on two
-// layers of context held by the instance: the tenant's (UpdateTenantContext,
-// a tenant-admin entitlement) and the calling user's own (UpdateContext, any
-// user, their own files only). The model is reached through llmproxy over S2S;
+// One instance per tenant (tenant_owned), shared by that tenant's users; every
+// request names its target tenant (the route field `tenant`) and the gateway
+// routes it to that tenant's instance. Client-facing (C2S): the caller is an
+// authenticated user of the tenant. Answers rest on two layers of context held
+// by the instance: the tenant's (UpdateTenantContext, a tenant-admin
+// entitlement) and the calling user's own (UpdateContext, any user, their own
+// files only). The model is reached through llmproxy over S2S;
 // doppelganger holds no model credential. Context lives on the instance's
 // disk until stratum is ported, when it moves there.
 // ---------------------------------------------------------------------------
@@ -59,6 +60,10 @@ message Config {
 message CreateSessionRequest {
   // Optional context given at creation. More can be added with UpdateSession.
   repeated string context = 1 [(spec.assert_max_size) = 100];
+  // tenant is the target tenant's tid, the rpc's route_field: it picks the
+  // tenant's instance. Only members of that tenant (and /system) are let in
+  // (no RPC_FLAG_ANY_TENANT), so for a user it is their own tenant.
+  string tenant = 2;
 }
 
 message CreateSessionResponse {
@@ -69,6 +74,10 @@ message UpdateSessionRequest {
   string          session_id = 1 [(spec.assert_required) = true];
   // Context to append. Existing context is kept.
   repeated string context    = 2 [(spec.assert_max_size) = 100];
+  // tenant is the target tenant's tid, the rpc's route_field: it picks the
+  // tenant's instance. Only members of that tenant (and /system) are let in
+  // (no RPC_FLAG_ANY_TENANT), so for a user it is their own tenant.
+  string tenant = 3;
 }
 
 message UpdateSessionResponse {}
@@ -134,6 +143,10 @@ message ContextDocument {
 // files given are the context afterwards, nothing else. An empty list clears it.
 message UpdateContextRequest {
   repeated ContextFile files = 1 [(spec.assert_max_size) = 4096];
+  // tenant is the target tenant's tid, the rpc's route_field: it picks the
+  // tenant's instance. Only members of that tenant (and /system) are let in
+  // (no RPC_FLAG_ANY_TENANT), so for a user it is their own tenant.
+  string tenant = 2;
 }
 
 message UpdateContextResponse {
@@ -144,6 +157,10 @@ message UpdateContextResponse {
 // UpdateTenantContextRequest replaces the tenant's shared context, whole.
 message UpdateTenantContextRequest {
   repeated ContextFile files = 1 [(spec.assert_max_size) = 4096];
+  // tenant is the target tenant's tid, the rpc's route_field: it picks the
+  // tenant's instance. Only members of that tenant (and /system) are let in
+  // (no RPC_FLAG_ANY_TENANT), so for a user it is their own tenant.
+  string tenant = 2;
 }
 
 message UpdateTenantContextResponse {
@@ -199,6 +216,10 @@ message Session {
 message GenerateAnswerRequest {
   string session_id = 1 [(spec.assert_required) = true];
   string question   = 2 [(spec.assert_required) = true];
+  // tenant is the target tenant's tid, the rpc's route_field: it picks the
+  // tenant's instance. Only members of that tenant (and /system) are let in
+  // (no RPC_FLAG_ANY_TENANT), so for a user it is their own tenant.
+  string tenant = 3;
 }
 
 enum AnswerKind {
@@ -235,12 +256,12 @@ service Doppelganger {
   // answer is for, and what it is for. Returns the session_id every later
   // call needs.
   rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse) {
-    option (spec.rpc) = {flags: [RPC_FLAG_AUTH_ANY_USER]};
+    option (spec.rpc) = {route_field: "tenant", flags: [RPC_FLAG_AUTH_ANY_USER]};
   }
   // Adds context to an open session, for example what NEEDS_CONTEXT asked
   // for. Nothing is answered here; ask again afterwards.
   rpc UpdateSession(UpdateSessionRequest) returns (UpdateSessionResponse) {
-    option (spec.rpc) = {flags: [RPC_FLAG_AUTH_ANY_USER]};
+    option (spec.rpc) = {route_field: "tenant", flags: [RPC_FLAG_AUTH_ANY_USER]};
   }
   // Answers one question in a session as the person the context describes
   // would, from the tenant's context and the caller's own, with reasoning,
@@ -248,17 +269,17 @@ service Doppelganger {
   // is how to push back; it does not repeat itself. A session belongs to the
   // user who opened it.
   rpc GenerateAnswer(GenerateAnswerRequest) returns (GenerateAnswerResponse) {
-    option (spec.rpc) = {flags: [RPC_FLAG_AUTH_ANY_USER]};
+    option (spec.rpc) = {route_field: "tenant", flags: [RPC_FLAG_AUTH_ANY_USER]};
   }
   // Replaces the calling user's own context with the files given. Any user of
   // the tenant may do this; it reaches only their own context.
   rpc UpdateContext(UpdateContextRequest) returns (UpdateContextResponse) {
-    option (spec.rpc) = {flags: [RPC_FLAG_AUTH_ANY_USER]};
+    option (spec.rpc) = {route_field: "tenant", flags: [RPC_FLAG_AUTH_ANY_USER]};
   }
   // Replaces the tenant's shared context with the files given. Entitlement
   // gated: the caller's token must carry this RPC's grant, which the tenant's
   // ceiling must allow.
   rpc UpdateTenantContext(UpdateTenantContextRequest) returns (UpdateTenantContextResponse) {
-    option (spec.rpc) = {};
+    option (spec.rpc) = {route_field: "tenant"};
   }
 }
