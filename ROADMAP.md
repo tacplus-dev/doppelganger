@@ -7,6 +7,7 @@ Answers questions on Jody's behalf from his context repo: a tenant-owned C2S fle
 Go. Unreleased; tacplus floor 2.4 (declared, #1 still open).
 
 ## Next
+- Declare route fields (target tenant on every tenant-owned rpc), floor 2.5 (#6, after tacplus#198)
 - Nothing approved and unblocked; every open approved issue is in Later.
 
 ## Later
