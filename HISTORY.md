@@ -3,3 +3,4 @@
 Append-only: add entries at the end, never edit or remove one (CI enforces it). One line each:
 `- <YYYY-MM-DD> <who: looper|agent|jody> <kind: issue|decision|release|deploy> <one line> (<links>)`
 
+- 2026-10-29 looper issue Bump golang.org/x/net to v0.62.0+ (GO-2026-6866, GO-2026-6860) (#8, 1931c4b)
