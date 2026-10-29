@@ -1,6 +1,6 @@
 module github.com/tacplus-dev/doppelganger
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/dsnet/compress v0.0.1
