@@ -9,6 +9,7 @@ Go. Unreleased; tacplus floor 2.4 (declared, #1 still open).
 ## Next
 - Declare route fields (target tenant on every tenant-owned rpc), floor 2.5 (#6, after tacplus#198)
 - Nothing approved and unblocked; every open approved issue is in Later.
+- Panel mode: a multi-vendor panel (through llmproxy) generates alternatives, then answers "what would Jody do?" with confidence and dissent; acceptance is a backtest on tacplus#212's 10-29 situation (#10; vendors need Jody's decision) (Jody, 2026-10-31)
 
 ## Later
 - Declare the tacplus floor 2.4 and pass the gates on it (#1), blocked on tacplus-dev/tacplus#188
