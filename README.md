@@ -35,14 +35,28 @@ to answer. Design and rules: `~/workspace/jody/agents.md`, "An agent that repres
 about a design question, and answers with recommendations, confidence and dissent, marked
 **derived (panel)** (`PROVENANCE_DERIVED_PANEL`), never as the person's decision.
 
-- **Seats:** `Config.panel_model_aliases`, one llmproxy alias per panelist (`openai-latest`,
-  `xai-latest`, `gemini-latest`). llmproxy resolves each to its vendor's latest model; the panel
-  never names a model id. Every answer records the alias, the resolved model id and the time.
-  llmproxy does not return the resolved id yet (tacplus-dev/llmproxy#13), so it is empty until it
-  does.
+- **Seats:** `Config.panel_model_aliases`, one llmproxy alias per panelist, in seat order. Jody's
+  panel (2026-10-31): Claude is #1, OpenAI #2, Gemini #3 (`claude-opus-latest`, `openai-latest`,
+  `gemini-latest`); Grok joins when xAI offers keyless auth. llmproxy resolves each alias to its
+  vendor's latest model; the panel never names a model id. Every answer records the alias, the
+  model llmproxy resolved it to (`provider_model`) and the time.
+- **Same inputs for every seat:** in each phase, and under each lens, every seat's request is the
+  same bytes; on the wire only the alias llmproxy routes by differs. A seat on the moderator's
+  alias is a separate instance, and no moderator call feeds it.
+- **Moderator:** `Config.panel_moderator_alias` (Claude). It never votes, never sees the
+  principles or any other context, and is never told which panelist proposed or dissented. It makes three calls, each checked by code, each falling back to
+  code and reported as a failure if it fails:
+  - **frame**: restates the caller's question, requirements and situation for phase 1 (the
+    caller's text as given otherwise);
+  - **merge**: groups the phase-1 proposals, shown without their proposers. Code checks every
+    proposal is in exactly one option, none is invented and the fixed options stay apart, and
+    keeps every proposal and proposer itself (code merges by normalized title otherwise);
+  - **summary**: explains the tally for the person. It changes nothing in the tally; code keeps it
+    only if it names the top option and quotes every dissent (`D1`, `D2`, ..., each objection and
+    would-change-mind word for word).
 - **Phase 1** (alternatives): each seat gets only the question and the situation (no principles,
-  no context) and lists up to eight options. Code merges them by normalized title, keeps every
-  proposer, and always adds "Reuse what the platform already has" and "Do nothing / defer".
+  no context, no person) and lists up to eight options. They are merged (above), keeping every
+  proposer, and "Reuse what the platform already has" and "Do nothing / defer" are always first.
 - **Phase 2** (what would the person do): each seat answers once under each lens (reuse and
   generator; invariants; failure from the other side; producer vs consumer; adversary) from the
   merged options and the person's principles, in a fixed schema: ranked option ids, confidence
@@ -55,22 +69,27 @@ about a design question, and answers with recommendations, confidence and dissen
   agreement (share of answers ranking it first), every dissenting answer and every objection to
   the top option word for word. `MAY_ACT` only when every answer agrees, no seat failed, and the
   caller says the matter is reversible and touches neither security nor identity; otherwise
-  `TO_PERSON`.
+  `TO_PERSON`. A moderator failure is neither dissent nor a missing seat.
 - **Track record:** every run is a `PanelRun` record in stratum. `UpdatePanelDecision`
   (entitlement gated) records the option the person chose; `GetPanelTrackRecord` scores decided
-  runs per model (alias and resolved id) and per question kind.
+  runs per model (alias and resolved id, Claude included) and per question kind.
 
 ### Vendor data terms
 
-Before a vendor's seat goes live, its API's terms must be confirmed in writing: no training on
-inputs, and the shortest retention available. Jody confirms them (tracked on
-tacplus-dev/llmproxy#13); none is confirmed yet.
+A vendor's seat goes live only once its terms are recorded here. Jody accepted each vendor's
+default API terms, with the settings below (tacplus-dev/llmproxy#13, 2026-10-31). Zero data
+retention needs the vendor's approval and is not needed while the panel receives only the
+engineering principles and the design question (`principles_paths`); apply for it if that ever
+changes. llmproxy turns a vendor on separately (its `LIVE_VENDORS`, with the same terms in its
+README); as of 2026-10-31 only Anthropic is live there, so OpenAI's and Gemini's seats fail
+(reported, never counted) until it turns them on.
 
-| Vendor | No training on API inputs | Retention | Confirmed |
+| Vendor | No training on API inputs | Retention and settings | Terms |
 |---|---|---|---|
-| OpenAI | not yet confirmed | not yet confirmed | no |
-| xAI | not yet confirmed | not yet confirmed | no |
-| Google (Gemini) | not yet confirmed | not yet confirmed | no |
+| Anthropic (Claude) | not recorded: live in llmproxy before its data-terms rule | not recorded | — |
+| OpenAI | yes: API data is not used for training unless we opt in, and we do not | abuse-monitoring logs per OpenAI's policy; never use extended prompt caching | [your data](https://developers.openai.com/docs/guides/your-data) |
+| Google (Gemini, Vertex AI) | yes: no training on customer data without permission | abuse-monitoring logs per Google's policy; durable caching and session resumption off on the GCP project (the hub applies it) | [data governance](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/data-governance) |
+| xAI (Grok) | — | sits out until xAI offers keyless auth | — |
 
 ## Build
 

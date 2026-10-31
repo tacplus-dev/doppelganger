@@ -52,9 +52,9 @@ var _ sm.Handler = (*Server)(nil)
 func (s *Server) DoppelgangerGrpcImpl() fe.DoppelgangerHandler { return s }
 
 // DoppelgangerConfig is the generated service manager's config delivery, at
-// start and on every change: model_alias, panel_model_aliases and
-// principles_paths take effect here. An answer in flight finishes with the
-// engine (or panel) it started with.
+// start and on every change: model_alias, panel_model_aliases,
+// panel_moderator_alias and principles_paths take effect here. An answer in
+// flight finishes with the engine (or panel) it started with.
 func (s *Server) DoppelgangerConfig(cfg *pb.Config) error {
 	if s.NewProvider == nil {
 		return errors.New("doppelganger: no provider constructor wired")
@@ -80,6 +80,10 @@ func (s *Server) DoppelgangerConfig(cfg *pb.Config) error {
 		panel := &Panel{Contexts: contexts, PrinciplesPaths: append([]string{}, cfg.GetPrinciplesPaths()...)}
 		for _, alias := range aliases {
 			panel.Seats = append(panel.Seats, PanelSeat{Alias: alias, Panelist: s.NewPanelist(alias)})
+		}
+		// The moderator is its own instance, even on a seat's alias.
+		if alias := cfg.GetPanelModeratorAlias(); alias != "" {
+			panel.Moderator = &PanelSeat{Alias: alias, Panelist: s.NewPanelist(alias)}
 		}
 		s.Panel = panel
 	}
@@ -305,6 +309,12 @@ func (s *Server) GeneratePanelAnswer(ctx context.Context, caller *servicemanager
 		Answers:  run.GetAnswers(),
 		Failures: run.GetFailures(),
 		Result:   run.GetResult(),
+
+		Moderator:          run.GetModerator(),
+		FramedQuestion:     run.GetFramedQuestion(),
+		FramedRequirements: run.GetFramedRequirements(),
+		FramedSituation:    run.GetFramedSituation(),
+		ModeratorMerged:    run.GetModeratorMerged(),
 	}, nil
 }
 

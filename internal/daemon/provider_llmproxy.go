@@ -33,10 +33,11 @@ func (p *LlmProxy) Complete(ctx context.Context, req Request) (json.RawMessage, 
 	return raw, err
 }
 
-// CompleteWithModel is Complete for a panel seat. The model it names is
-// always empty for now: llmproxy does not yet say which model a "latest"
-// alias resolved to (tacplus-dev/llmproxy#13), so a panel answer records the
-// alias alone until it does.
+// CompleteWithModel is Complete for a panel seat or the moderator, and
+// names the model llmproxy resolved the alias to (its provider_model), so a
+// panel answer records the exact model as well as the alias. The request is
+// the same for every alias but the alias itself: every seat is given the
+// same bytes.
 func (p *LlmProxy) CompleteWithModel(ctx context.Context, req Request) (json.RawMessage, string, error) {
 	resp, err := p.Client.GenerateCompletionAsService(ctx, &llmproxy_pb.GenerateCompletionRequest{
 		ModelAlias: p.ModelAlias,
@@ -50,7 +51,7 @@ func (p *LlmProxy) CompleteWithModel(ctx context.Context, req Request) (json.Raw
 		return nil, "", fmt.Errorf("llmproxy: %w", err)
 	}
 	raw, err := structuredOutput(resp.GetText())
-	return raw, "", err
+	return raw, resp.GetProviderModel(), err
 }
 
 // userText is the whole context repo (none for a panel seat, whose turn

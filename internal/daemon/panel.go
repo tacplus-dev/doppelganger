@@ -24,10 +24,19 @@ var panelPhase1Prompt string
 //go:embed panel_phase2.md
 var panelPhase2Prompt string
 
+//go:embed panel_frame.md
+var panelFramePrompt string
+
+//go:embed panel_merge.md
+var panelMergePrompt string
+
+//go:embed panel_summary.md
+var panelSummaryPrompt string
+
 // Panelist is one panel seat's model, reached through llmproxy by an alias. It
 // turns one Request into the model's JSON answer and names the model that gave
-// it (empty while llmproxy does not report it, tacplus-dev/llmproxy#13), so
-// every answer is scored against the model that actually answered.
+// it (the model llmproxy resolved the alias to), so every answer is scored
+// against the model that actually answered.
 type Panelist interface {
 	CompleteWithModel(ctx context.Context, req Request) (json.RawMessage, string, error)
 }
@@ -39,13 +48,21 @@ type PanelSeat struct {
 	Panelist Panelist
 }
 
-// Panel runs panel mode (#10). Phase 1 asks every seat for alternatives from
-// the question and the situation alone; code merges them. Phase 2 asks every
-// seat under every lens to rank them from the person's principles; code
-// tallies. Nothing from the context but the principles files reaches a seat.
+// Panel runs panel mode (#10). The moderator, if any, frames the question.
+// Phase 1 asks every seat for alternatives from the question and the
+// situation alone; the moderator merges them, checked by code, or code does.
+// Phase 2 asks every seat under every lens to rank them from the person's
+// principles; code tallies, and the moderator explains the tally, checked by
+// code to quote every dissent. Nothing from the context but the principles
+// files reaches a seat, and nothing at all reaches the moderator.
+//
+// Every seat is given the same requests, byte for byte (Jody, 2026-10-31): a
+// seat on the moderator's alias is a separate instance, and no moderator call
+// feeds a seat's beyond the framing and the merged options every seat gets.
 type Panel struct {
 	Contexts        *ContextStore
 	Seats           []PanelSeat
+	Moderator       *PanelSeat // nil: no moderator
 	PrinciplesPaths []string
 	now             func() time.Time
 }
@@ -145,9 +162,68 @@ const panelRankingSchema = `{
   "required": ["ranked_option_ids", "confidence", "objections", "would_change_mind"]
 }`
 
+// panelFraming is the question as every seat is given it.
+type panelFraming struct {
+	Question     string   `json:"question"`
+	Requirements []string `json:"requirements"`
+	Situation    string   `json:"situation"`
+}
+
+const panelFrameSchema = `{
+  "type": "object",
+  "properties": {
+    "question": {"type": "string"},
+    "requirements": {"type": "array", "maxItems": 64, "items": {"type": "string"}},
+    "situation": {"type": "string"}
+  },
+  "required": ["question", "requirements", "situation"]
+}`
+
+type panelMergedOption struct {
+	Title   string   `json:"title"`
+	Summary string   `json:"summary"`
+	Members []string `json:"members"`
+}
+
+type panelMerged struct {
+	Options []panelMergedOption `json:"options"`
+}
+
+const panelMergeSchema = `{
+  "type": "object",
+  "properties": {
+    "options": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "summary": {"type": "string"},
+          "members": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["title", "summary", "members"]
+      }
+    }
+  },
+  "required": ["options"]
+}`
+
+type panelSummary struct {
+	Summary string `json:"summary"`
+}
+
+const panelSummarySchema = `{
+  "type": "object",
+  "properties": {"summary": {"type": "string"}},
+  "required": ["summary"]
+}`
+
 // Run asks the panel one question. It fails closed before any model call when
 // there is no panel or no principles, and when no seat gives a usable answer;
-// a seat that fails is reported in the run's failures, never counted.
+// a seat that fails is reported in the run's failures, never counted. A
+// moderator step that fails falls back to code and is reported too; it never
+// changes what is counted.
 func (p *Panel) Run(ctx context.Context, tenant string, q PanelQuestion) (*pb.PanelRun, error) {
 	if len(p.Seats) == 0 {
 		return nil, errNoPanel
@@ -160,13 +236,16 @@ func (p *Panel) Run(ctx context.Context, tenant string, q PanelQuestion) (*pb.Pa
 		return nil, err
 	}
 	run := &pb.PanelRun{Person: q.Person, QuestionKind: q.Kind, Question: q.Question, Situation: q.Situation}
+	framing := p.frame(ctx, run, q)
+	run.FramedQuestion, run.FramedRequirements, run.FramedSituation = framing.Question, framing.Requirements, framing.Situation
 
 	// Phase 1: alternatives, from the question and the situation only.
 	props := make([][]panelProposal, len(p.Seats))
 	models := make([]*pb.PanelModel, len(p.Seats))
 	errs := make([]error, len(p.Seats))
+	phase1 := Request{System: panelPhase1Prompt, Turn: renderPanelPhase1(framing), Schema: panelOptionsSchema}
 	p.each(len(p.Seats), func(i int) {
-		req := Request{System: panelPhase1Prompt, Turn: renderPanelPhase1(q), Schema: panelOptionsSchema}
+		req := phase1
 		var out panelProposals
 		models[i], errs[i] = p.ask(ctx, p.Seats[i], req, func(raw json.RawMessage) error {
 			out = panelProposals{}
@@ -190,7 +269,7 @@ func (p *Panel) Run(ctx context.Context, tenant string, q PanelQuestion) (*pb.Pa
 	if len(proposers) == 0 {
 		return nil, fmt.Errorf("no panelist listed alternatives: %v", errors.Join(errs...))
 	}
-	run.Options = mergeOptions(proposers, proposed)
+	run.Options = p.merge(ctx, run, framing, proposers, proposed)
 
 	// Phase 2: every seat that answered phase 1, under every lens.
 	type job struct {
@@ -213,7 +292,7 @@ func (p *Panel) Run(ctx context.Context, tenant string, q PanelQuestion) (*pb.Pa
 	failures := make([]*pb.PanelFailure, len(jobs))
 	p.each(len(jobs), func(i int) {
 		j := jobs[i]
-		req := Request{System: panelPhase2Prompt, Turn: renderPanelPhase2(q, run.Options, principles, j.lens), Schema: panelRankingSchema}
+		req := Request{System: panelPhase2Prompt, Turn: renderPanelPhase2(q.Person, framing, run.Options, principles, j.lens), Schema: panelRankingSchema}
 		var out panelRanking
 		model, err := p.ask(ctx, j.seat, req, func(raw json.RawMessage) error {
 			out = panelRanking{}
@@ -249,8 +328,140 @@ func (p *Panel) Run(ctx context.Context, tenant string, q PanelQuestion) (*pb.Pa
 	if len(run.Answers) == 0 {
 		return nil, errors.New("no panelist gave a usable ranking")
 	}
-	run.Result = tallyPanel(run.Options, run.Answers, q, len(run.Failures))
+	panelists := 0
+	for _, f := range run.Failures {
+		if f.GetModeratorStep() == pb.PanelModeratorStep_PANEL_MODERATOR_STEP_UNSPECIFIED {
+			panelists++
+		}
+	}
+	run.Result = tallyPanel(run.Options, run.Answers, q, panelists)
+	run.Result.Summary = p.summarize(ctx, run, framing)
 	return run, nil
+}
+
+// panelFramingOf is the caller's question and situation as given.
+func panelFramingOf(q PanelQuestion) panelFraming {
+	return panelFraming{Question: q.Question, Situation: q.Situation}
+}
+
+// frame asks the moderator to frame the question for phase 1, from the
+// caller's question and situation alone; without a moderator, or when it
+// fails, the caller's text is used as given.
+func (p *Panel) frame(ctx context.Context, run *pb.PanelRun, q PanelQuestion) panelFraming {
+	given := panelFramingOf(q)
+	if p.Moderator == nil {
+		return given
+	}
+	req := Request{System: panelFramePrompt, Turn: renderPanelPhase1(given), Schema: panelFrameSchema}
+	var out panelFraming
+	model, err := p.ask(ctx, *p.Moderator, req, func(raw json.RawMessage) error {
+		out = panelFraming{}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return fmt.Errorf("%w: %v", errStructuredOutput, err)
+		}
+		return validFraming(out)
+	})
+	run.Moderator = model
+	if err != nil {
+		p.moderatorFailed(run, model, pb.PanelModeratorStep_PANEL_MODERATOR_STEP_FRAME, err)
+		return given
+	}
+	out.Question, out.Situation = strings.TrimSpace(out.Question), strings.TrimSpace(out.Situation)
+	for i, r := range out.Requirements {
+		out.Requirements[i] = strings.TrimSpace(r)
+	}
+	return out
+}
+
+// merge asks the moderator to merge the phase-1 proposals, shown without
+// their proposers, and builds the options from its grouping, which code has
+// checked; proposers and proposals are kept by code. Without a moderator, or
+// when it fails, code merges by normalized title.
+func (p *Panel) merge(ctx context.Context, run *pb.PanelRun, framing panelFraming, models []*pb.PanelModel, proposals [][]panelProposal) []*pb.PanelOption {
+	if p.Moderator == nil {
+		return mergeOptions(models, proposals)
+	}
+	type member struct {
+		model *pb.PanelModel
+		prop  panelProposal
+	}
+	ids := []string{"F1", "F2"}
+	members := map[string]member{}
+	for i, props := range proposals {
+		for _, prop := range props {
+			id := fmt.Sprintf("P%d", len(members)+1)
+			ids = append(ids, id)
+			members[id] = member{models[i], prop}
+		}
+	}
+	req := Request{System: panelMergePrompt, Turn: renderPanelMerge(framing, ids, func(id string) panelProposal { return members[id].prop }), Schema: panelMergeSchema}
+	var out panelMerged
+	model, err := p.ask(ctx, *p.Moderator, req, func(raw json.RawMessage) error {
+		out = panelMerged{}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return fmt.Errorf("%w: %v", errStructuredOutput, err)
+		}
+		return validMerge(out, ids)
+	})
+	run.Moderator = model
+	if err != nil {
+		p.moderatorFailed(run, model, pb.PanelModeratorStep_PANEL_MODERATOR_STEP_MERGE, err)
+		return mergeOptions(models, proposals)
+	}
+	reuse, deferred := fixedOptions()
+	opts := []*pb.PanelOption{reuse, deferred}
+	for _, g := range out.Options {
+		var o *pb.PanelOption
+		switch {
+		case contains(g.Members, "F1"):
+			o = reuse
+		case contains(g.Members, "F2"):
+			o = deferred
+		default:
+			o = &pb.PanelOption{Title: strings.TrimSpace(g.Title), Summary: strings.TrimSpace(g.Summary)}
+			opts = append(opts, o)
+		}
+		ms := append([]string{}, g.Members...)
+		sort.Slice(ms, func(i, j int) bool { return proposalIndex(ms[i]) < proposalIndex(ms[j]) })
+		for _, id := range ms {
+			m, ok := members[id]
+			if !ok {
+				continue // F1 or F2
+			}
+			addProposal(o, m.model, m.prop)
+		}
+	}
+	numberOptions(opts)
+	run.ModeratorMerged = true
+	return opts
+}
+
+// summarize asks the moderator to explain the tally for the person, and
+// keeps the summary only if code finds it names the top option and quotes
+// every dissent. Without a moderator, or when it fails, there is none.
+func (p *Panel) summarize(ctx context.Context, run *pb.PanelRun, framing panelFraming) string {
+	if p.Moderator == nil {
+		return ""
+	}
+	req := Request{System: panelSummaryPrompt, Turn: renderPanelSummary(framing, run.Options, run.Result), Schema: panelSummarySchema}
+	var out panelSummary
+	model, err := p.ask(ctx, *p.Moderator, req, func(raw json.RawMessage) error {
+		out = panelSummary{}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return fmt.Errorf("%w: %v", errStructuredOutput, err)
+		}
+		return validSummary(out, run.Result)
+	})
+	run.Moderator = model
+	if err != nil {
+		p.moderatorFailed(run, model, pb.PanelModeratorStep_PANEL_MODERATOR_STEP_SUMMARY, err)
+		return ""
+	}
+	return strings.TrimSpace(out.Summary)
+}
+
+func (p *Panel) moderatorFailed(run *pb.PanelRun, model *pb.PanelModel, step pb.PanelModeratorStep, err error) {
+	run.Failures = append(run.Failures, &pb.PanelFailure{Model: model, Phase: 0, ModeratorStep: step, Error: err.Error()})
 }
 
 // ask makes one seat's call, retrying when accept refuses the reply as not
@@ -348,6 +559,153 @@ func validRanking(r panelRanking, known map[string]bool) error {
 	return nil
 }
 
+func validFraming(f panelFraming) error {
+	if strings.TrimSpace(f.Question) == "" {
+		return &invalidPanelAnswer{"the question is empty."}
+	}
+	if strings.TrimSpace(f.Situation) == "" {
+		return &invalidPanelAnswer{"the situation is empty."}
+	}
+	if len(f.Requirements) > 64 {
+		return &invalidPanelAnswer{fmt.Sprintf("it lists %d requirements; list at most 64.", len(f.Requirements))}
+	}
+	for _, r := range f.Requirements {
+		if strings.TrimSpace(r) == "" {
+			return &invalidPanelAnswer{"a requirement is empty."}
+		}
+	}
+	return nil
+}
+
+// validMerge is the code check on the moderator's merge (#10, decision 6):
+// every input id (F1, F2, every P) in exactly one option, no option without
+// members (none invented), the two fixed options apart, every option titled.
+func validMerge(m panelMerged, ids []string) error {
+	if len(m.Options) > 64 {
+		return &invalidPanelAnswer{fmt.Sprintf("it gives %d options; give at most 64.", len(m.Options))}
+	}
+	known := map[string]bool{}
+	for _, id := range ids {
+		known[id] = true
+	}
+	in := map[string]int{}
+	for i, o := range m.Options {
+		if strings.TrimSpace(o.Title) == "" {
+			return &invalidPanelAnswer{fmt.Sprintf("option %d has no title.", i+1)}
+		}
+		if len(o.Members) == 0 {
+			return &invalidPanelAnswer{fmt.Sprintf("option %q has no members; do not invent options.", o.Title)}
+		}
+		for _, id := range o.Members {
+			if !known[id] {
+				return &invalidPanelAnswer{fmt.Sprintf("option %q names %q, an unknown id; use the ids given.", o.Title, id)}
+			}
+			if j, ok := in[id]; ok {
+				return &invalidPanelAnswer{fmt.Sprintf("%s is in option %d and option %d; put each id in exactly one.", id, j+1, i+1)}
+			}
+			in[id] = i
+		}
+	}
+	var missing []string
+	for _, id := range ids {
+		if _, ok := in[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) > 0 {
+		return &invalidPanelAnswer{fmt.Sprintf("%s in no option; put every id in exactly one.", strings.Join(missing, ", "))}
+	}
+	if in["F1"] == in["F2"] {
+		return &invalidPanelAnswer{"F1 and F2 are in the same option; keep them apart."}
+	}
+	return nil
+}
+
+// validSummary is the code check on the moderator's summary: it names the
+// top option and every dissent by its label (D1, D2, ... in the tally's
+// order), and quotes each dissent's objections and would-change-mind word for
+// word (whitespace aside). The tally itself is never read back from it.
+func validSummary(s panelSummary, res *pb.PanelResult) error {
+	text := collapseSpace(s.Summary)
+	if !hasToken(text, res.GetTopOptionId()) {
+		return &invalidPanelAnswer{fmt.Sprintf("it does not name the top option, %s.", res.GetTopOptionId())}
+	}
+	var missing []string
+	for i, d := range res.GetDissents() {
+		label := fmt.Sprintf("D%d", i+1)
+		if !hasToken(text, label) {
+			missing = append(missing, label)
+		}
+		for _, q := range dissentQuotes(d) {
+			if !strings.Contains(text, collapseSpace(q)) {
+				missing = append(missing, fmt.Sprintf("%s's %q", label, q))
+			}
+		}
+	}
+	if len(missing) > 0 {
+		return &invalidPanelAnswer{"it leaves out or rewords dissent; quote word for word: " + strings.Join(missing, "; ") + "."}
+	}
+	return nil
+}
+
+// dissentQuotes are the texts of a dissent the summary must quote.
+func dissentQuotes(d *pb.PanelDissent) []string {
+	var qs []string
+	for _, o := range d.GetObjections() {
+		if strings.TrimSpace(o.GetText()) != "" {
+			qs = append(qs, o.GetText())
+		}
+	}
+	if strings.TrimSpace(d.GetWouldChangeMind()) != "" {
+		qs = append(qs, d.GetWouldChangeMind())
+	}
+	return qs
+}
+
+func collapseSpace(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// hasToken says whether word occurs in s on its own, not inside a longer
+// word or number (D1 is not in D10).
+func hasToken(s, word string) bool {
+	isWord := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+	for i := 0; ; {
+		j := strings.Index(s[i:], word)
+		if j < 0 {
+			return false
+		}
+		start, end := i+j, i+j+len(word)
+		before, after := ' ', ' '
+		if start > 0 {
+			before = rune(s[start-1])
+		}
+		if end < len(s) {
+			after = rune(s[end])
+		}
+		if !isWord(before) && !isWord(after) {
+			return true
+		}
+		i = start + 1
+	}
+}
+
+func contains(xs []string, x string) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
+}
+
+// proposalIndex orders P1, P2, ... by number (seat order), F ids first.
+func proposalIndex(id string) int {
+	var n int
+	if _, err := fmt.Sscanf(id, "P%d", &n); err != nil {
+		return 0
+	}
+	return n
+}
+
 // normalizeOptionTitle is the merge key: lower case, letters and digits only,
 // single spaces. Options merge only when their keys are equal; merging by
 // meaning would need a model, and its output a code check (#10, decision 6).
@@ -372,10 +730,8 @@ func normalizeOptionTitle(s string) string {
 // first proposed, after the two fixed options. Every option keeps every seat
 // that proposed it; its summary is the first proposer's.
 func mergeOptions(models []*pb.PanelModel, proposals [][]panelProposal) []*pb.PanelOption {
-	opts := []*pb.PanelOption{
-		{Title: optionReuse, Summary: "Build nothing new: use what the platform already provides.", Fixed: true},
-		{Title: optionDefer, Summary: "Change nothing now; decide later, if at all.", Fixed: true},
-	}
+	reuse, deferred := fixedOptions()
+	opts := []*pb.PanelOption{reuse, deferred}
 	byKey := map[string]*pb.PanelOption{}
 	for _, o := range opts {
 		byKey[normalizeOptionTitle(o.GetTitle())] = o
@@ -389,15 +745,32 @@ func mergeOptions(models []*pb.PanelModel, proposals [][]panelProposal) []*pb.Pa
 				byKey[key] = o
 				opts = append(opts, o)
 			}
-			if !proposedBy(o, models[i]) {
-				o.ProposedBy = append(o.ProposedBy, models[i])
-			}
+			addProposal(o, models[i], prop)
 		}
 	}
+	numberOptions(opts)
+	return opts
+}
+
+// fixedOptions are the two options every list carries, first.
+func fixedOptions() (reuse, deferred *pb.PanelOption) {
+	return &pb.PanelOption{Title: optionReuse, Summary: "Build nothing new: use what the platform already provides.", Fixed: true},
+		&pb.PanelOption{Title: optionDefer, Summary: "Change nothing now; decide later, if at all.", Fixed: true}
+}
+
+// addProposal keeps a proposal, word for word, on the option it merged into,
+// and its panelist among the option's proposers.
+func addProposal(o *pb.PanelOption, m *pb.PanelModel, prop panelProposal) {
+	o.Proposals = append(o.Proposals, &pb.PanelProposal{Model: m, Title: prop.Title, Summary: prop.Summary})
+	if !proposedBy(o, m) {
+		o.ProposedBy = append(o.ProposedBy, m)
+	}
+}
+
+func numberOptions(opts []*pb.PanelOption) {
 	for i, o := range opts {
 		o.OptionId = fmt.Sprintf("O%d", i+1)
 	}
-	return opts
 }
 
 func proposedBy(o *pb.PanelOption, m *pb.PanelModel) bool {
@@ -465,20 +838,93 @@ func tallyPanel(options []*pb.PanelOption, answers []*pb.PanelAnswer, q PanelQue
 	return res
 }
 
-func renderPanelPhase1(q PanelQuestion) string {
-	return "# Question\n\n" + q.Question + "\n\n# Requirements and situation\n\n" + q.Situation + "\n"
+// renderFraming is the question, then the requirements (when the moderator
+// listed them) and the situation.
+func renderFraming(f panelFraming) string {
+	var b strings.Builder
+	b.WriteString("# Question\n\n" + f.Question + "\n\n")
+	if len(f.Requirements) == 0 {
+		b.WriteString("# Requirements and situation\n\n" + f.Situation + "\n")
+		return b.String()
+	}
+	b.WriteString("# Requirements\n\n")
+	for _, r := range f.Requirements {
+		b.WriteString("- " + r + "\n")
+	}
+	b.WriteString("\n# Situation\n\n" + f.Situation + "\n")
+	return b.String()
 }
 
-func renderPanelPhase2(q PanelQuestion, options []*pb.PanelOption, principles string, lens panelLens) string {
+func renderPanelPhase1(f panelFraming) string { return renderFraming(f) }
+
+func renderPanelPhase2(person string, f panelFraming, options []*pb.PanelOption, principles string, lens panelLens) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Whose call\n\n%s\n\n", q.Person)
-	b.WriteString("# Question\n\n" + q.Question + "\n\n# Requirements and situation\n\n" + q.Situation + "\n\n")
+	fmt.Fprintf(&b, "# Whose call\n\n%s\n\n", person)
+	b.WriteString(renderFraming(f) + "\n")
 	b.WriteString("# Options\n\n")
 	for _, o := range options {
-		fmt.Fprintf(&b, "- %s: %s\n  %s\n", o.GetOptionId(), o.GetTitle(), strings.ReplaceAll(o.GetSummary(), "\n", "\n  "))
+		fmt.Fprintf(&b, "- %s: %s\n  %s\n", o.GetOptionId(), o.GetTitle(), indent(o.GetSummary()))
 	}
-	fmt.Fprintf(&b, "\n# %s's principles\n\n%s\n", q.Person, principles)
+	fmt.Fprintf(&b, "\n# %s's principles\n\n%s\n", person, principles)
 	b.WriteString("# Your lens\n\n" + lens.instruction + "\n")
+	return b.String()
+}
+
+func indent(s string) string { return strings.ReplaceAll(s, "\n", "\n  ") }
+
+// renderPanelMerge shows the moderator the fixed options and every proposal
+// by id, without who proposed it.
+func renderPanelMerge(f panelFraming, ids []string, proposal func(id string) panelProposal) string {
+	var b strings.Builder
+	b.WriteString(renderFraming(f) + "\n# Options to merge\n\n")
+	reuse, deferred := fixedOptions()
+	fmt.Fprintf(&b, "- F1: %s\n  (fixed) %s\n", reuse.GetTitle(), reuse.GetSummary())
+	fmt.Fprintf(&b, "- F2: %s\n  (fixed) %s\n", deferred.GetTitle(), deferred.GetSummary())
+	for _, id := range ids[2:] {
+		prop := proposal(id)
+		fmt.Fprintf(&b, "- %s: %s\n  %s\n", id, strings.TrimSpace(prop.Title), indent(prop.Summary))
+	}
+	return b.String()
+}
+
+// renderPanelSummary shows the moderator the tally and every dissent by
+// label, with the texts it must quote. It names no person, no principle and
+// no panelist, so the moderator cannot tell its own model's dissent from
+// another's; the result carries each dissent's model.
+func renderPanelSummary(f panelFraming, options []*pb.PanelOption, res *pb.PanelResult) string {
+	var b strings.Builder
+	b.WriteString("# Question\n\n" + f.Question + "\n\n# Options and tally\n\n")
+	byID := map[string]*pb.PanelOptionTally{}
+	for _, t := range res.GetTallies() {
+		byID[t.GetOptionId()] = t
+	}
+	for _, o := range options {
+		t := byID[o.GetOptionId()]
+		fmt.Fprintf(&b, "- %s: %s (points %d, first places %d)\n", o.GetOptionId(), o.GetTitle(), t.GetPoints(), t.GetFirstPlace())
+	}
+	fmt.Fprintf(&b, "\nTop option: %s. Agreement: %d%% of answers ranked it first. Disposition: %s.\n",
+		res.GetTopOptionId(), res.GetAgreement(), strings.TrimPrefix(res.GetDisposition().String(), "PANEL_DISPOSITION_"))
+	if len(res.GetObjectionsToTop()) > 0 {
+		b.WriteString("\n# Objections to the top option\n\n")
+		for _, o := range res.GetObjectionsToTop() {
+			fmt.Fprintf(&b, "- \"%s\"\n", o.GetText())
+		}
+	}
+	b.WriteString("\n# Dissents\n\n")
+	if len(res.GetDissents()) == 0 {
+		b.WriteString("None: every answer ranked the top option first.\n")
+	}
+	for i, d := range res.GetDissents() {
+		fmt.Fprintf(&b, "## D%d: lens %s, ranked %s first\n\n", i+1,
+			strings.ToLower(strings.TrimPrefix(d.GetLens().String(), "PANEL_LENS_")), d.GetRankedFirst())
+		for _, o := range d.GetObjections() {
+			fmt.Fprintf(&b, "- Objection to %s: \"%s\"\n", o.GetOptionId(), o.GetText())
+		}
+		if d.GetWouldChangeMind() != "" {
+			fmt.Fprintf(&b, "- Would change mind: \"%s\"\n", d.GetWouldChangeMind())
+		}
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 

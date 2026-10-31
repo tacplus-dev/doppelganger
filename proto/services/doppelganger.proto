@@ -60,15 +60,23 @@ message Config {
   // model_alias is the llmproxy alias answers are generated with.
   string model_alias = 3 [(spec.assert_required) = true];
   // panel_model_aliases are the llmproxy aliases that sit on the panel
-  // (GeneratePanelAnswer), one per panelist, for example "openai-latest",
-  // "xai-latest", "gemini-latest". llmproxy resolves each to its vendor's
-  // current model; the panel never names a model id itself. Empty: no panel.
+  // (GeneratePanelAnswer), one per panelist, in seat order, for example
+  // "claude-opus-latest", "openai-latest", "gemini-latest". llmproxy resolves
+  // each to its vendor's current model; the panel never names a model id
+  // itself. Every seat is given the same inputs, byte for byte. Empty: no panel.
   repeated string panel_model_aliases = 4 [(spec.assert_max_size) = 16, (spec.assert_element_max_size) = 128];
   // principles_paths are the tenant-context paths (a file, or a directory
   // prefix) that hold the person's principles: the only part of the context a
   // panelist is given, and only in phase 2. None configured, or none matching
   // a Markdown file, and the panel refuses (fails closed).
   repeated string principles_paths = 5 [(spec.assert_max_size) = 64, (spec.assert_element_max_size) = 512];
+  // panel_moderator_alias is the llmproxy alias of the panel's moderator: it
+  // frames the question for phase 1, merges the phase-1 options (checked by
+  // code) and writes the summary for the person (checked by code to quote
+  // every dissent). It never votes and never sees the principles. A seat on
+  // the same alias is a separate instance: its calls carry nothing of the
+  // moderator's. Empty: no moderator; code merges and there is no summary.
+  string panel_moderator_alias = 6 [(spec.assert_max_size) = 128];
 }
 
 message CreateSessionRequest {
@@ -268,13 +276,15 @@ message GenerateAnswerResponse {
 // Panel mode (#10): a panel of models from different vendors, each reached
 // through llmproxy by its alias (Config.panel_model_aliases), answers "what
 // would the person do?" in two phases. Phase 1 gives every panelist only the
-// question and the situation and asks for alternatives; code merges them by
-// normalized title, keeping every proposer, and always adds "reuse what the
-// platform already has" and "do nothing / defer". Phase 2 gives every panelist
+// question and the situation and asks for alternatives; the moderator
+// (Config.panel_moderator_alias) merges them, checked by code, or code merges
+// them by normalized title, keeping every proposer either way, and always adds
+// "reuse what the platform already has" and "do nothing / defer". Phase 2 gives every panelist
 // the merged options, the person's principles (Config.principles_paths, nothing
 // else from the context) and each lens in turn, and takes a fixed answer
 // schema. Plain code tallies the answers: agreement per option and every
-// dissent word for word. The result is derived (panel), never the person's
+// dissent word for word; the moderator's summary explains it and must quote
+// every dissent. The result is derived (panel), never the person's
 // decision. Every run is a PanelRun record, so later decisions score it per
 // model and per question kind.
 // ---------------------------------------------------------------------------
@@ -301,8 +311,8 @@ enum PanelDisposition {
 }
 
 // PanelModel is the model behind one answer: the llmproxy alias asked and the
-// model id llmproxy resolved it to (empty while llmproxy does not report it,
-// tacplus-dev/llmproxy#13).
+// model id llmproxy resolved it to (its GenerateCompletionResponse
+// provider_model; empty if a call failed before any answer).
 message PanelModel {
   string model_alias    = 1 [(spec.assert_max_size) = 128];
   string resolved_model = 2 [(spec.assert_max_size) = 256];
@@ -320,6 +330,17 @@ message PanelOption {
   // fixed marks "reuse what the platform already has" and "do nothing / defer",
   // which are always on the list whoever proposed them.
   bool fixed = 5;
+  // proposals are the phase-1 proposals merged into this option, word for
+  // word, each with its panelist: every proposal of the run is in exactly one
+  // option.
+  repeated PanelProposal proposals = 6 [(spec.assert_max_size) = 128];
+}
+
+// PanelProposal is one panelist's phase-1 alternative as it was given.
+message PanelProposal {
+  PanelModel model = 1;
+  string title     = 2 [(spec.assert_max_size) = 512];
+  string summary   = 3 [(spec.assert_max_size) = 8192];
 }
 
 // PanelObjection is one objection a panelist raised, word for word.
@@ -363,12 +384,23 @@ message PanelDissent {
 }
 
 // PanelFailure is a panelist whose answer could not be used (the
-// vendor failed or never produced the schema); it is reported, not hidden.
+// vendor failed or never produced the schema), or a moderator step that fell
+// back to code; it is reported, not hidden.
 message PanelFailure {
   PanelModel model = 1;
+  // phase is 1 or 2 for a panelist; 0 for the moderator.
   int32      phase = 2;
   PanelLens  lens  = 3;
   string     error = 4 [(spec.assert_max_size) = 4096];
+  PanelModeratorStep moderator_step = 5;
+}
+
+// PanelModeratorStep is one of the moderator's three calls.
+enum PanelModeratorStep {
+  PANEL_MODERATOR_STEP_UNSPECIFIED = 0;
+  PANEL_MODERATOR_STEP_FRAME       = 1;  // frames the question for phase 1; on failure the caller's text is used as given
+  PANEL_MODERATOR_STEP_MERGE       = 2;  // merges the phase-1 options; on failure code merges by normalized title
+  PANEL_MODERATOR_STEP_SUMMARY     = 3;  // explains the tally; on failure the run has no summary
 }
 
 // PanelResult is the tally: derived (panel), never the person's decision.
@@ -385,6 +417,11 @@ message PanelResult {
   // would_change_mind is every answer's, word for word, in answer order.
   repeated string would_change_mind = 7 [(spec.assert_max_size) = 1024, (spec.assert_element_max_size) = 8192];
   PanelDisposition disposition = 8;
+  // summary is the moderator's explanation of this tally for the person. It
+  // changes nothing above; code checked that it names the top option and
+  // quotes every dissent (its D<n> label, objections and would-change-mind
+  // word for word). Empty when there is no moderator or it failed.
+  string summary = 9 [(spec.assert_max_size) = 262144];
 }
 
 // PanelRun is one panel question, its options, every answer and the tally,
@@ -431,6 +468,17 @@ message PanelRun {
   string decided_option_id = 14 [(spec.assert_max_size) = 64];
   int64  decided_at_ms     = 15;
   bool deleted = 16 [(spec.deleted_flag) = true];
+  // moderator is the model that moderated the run; empty when none did.
+  PanelModel moderator = 17;
+  // framed_question and framed_requirements and framed_situation are what
+  // every panelist was given in place of question and situation: the
+  // moderator's framing, or the caller's text as given.
+  string framed_question = 18 [(spec.assert_max_size) = 65536];
+  repeated string framed_requirements = 19 [(spec.assert_max_size) = 64, (spec.assert_element_max_size) = 4096];
+  string framed_situation = 20 [(spec.assert_max_size) = 262144];
+  // moderator_merged says the moderator merged the options (checked by code);
+  // false when code merged them by normalized title.
+  bool moderator_merged = 21;
 }
 
 message GeneratePanelAnswerRequest {
@@ -460,6 +508,12 @@ message GeneratePanelAnswerResponse {
   repeated PanelAnswer answers = 3 [(spec.assert_max_size) = 1024];
   repeated PanelFailure failures = 4 [(spec.assert_max_size) = 1024];
   PanelResult result = 5;
+  // moderator and the framed question are as on the PanelRun.
+  PanelModel moderator = 6;
+  string framed_question = 7 [(spec.assert_max_size) = 65536];
+  repeated string framed_requirements = 8 [(spec.assert_max_size) = 64, (spec.assert_element_max_size) = 4096];
+  string framed_situation = 9 [(spec.assert_max_size) = 262144];
+  bool moderator_merged = 10;
 }
 
 message UpdatePanelDecisionRequest {
@@ -540,7 +594,9 @@ service Doppelganger {
   // Asks the panel (Config.panel_model_aliases) what the person would do:
   // alternatives from the situation alone, then each panelist's ranking under
   // each lens from the person's principles (Config.principles_paths), tallied
-  // by code. The result is derived (panel), never the person's decision, and
+  // by code. The moderator (Config.panel_moderator_alias), if any, frames the
+  // question, merges the options and summarizes the tally, each checked by
+  // code. The result is derived (panel), never the person's decision, and
   // is kept as a PanelRun for the track record.
   rpc GeneratePanelAnswer(GeneratePanelAnswerRequest) returns (GeneratePanelAnswerResponse) {
     option (spec.rpc) = {route_field: "tenant", flags: [RPC_FLAG_AUTH_ANY_USER]};
