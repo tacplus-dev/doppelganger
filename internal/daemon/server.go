@@ -21,22 +21,29 @@ import (
 // authenticated user the gateway admitted, not used yet (every RPC is
 // RPC_FLAG_AUTH_ANY_USER).
 type Server struct {
-	// Records is the record query plane (stratum) over ContextDocument and
-	// Session; Publish and PublishSession are their write paths (the generated
-	// topic publishers). main wires all three.
+	// Records is the record query plane (stratum) over ContextDocument,
+	// Session and PanelRun; Publish, PublishSession and PublishPanelRun are
+	// their write paths (the generated topic publishers). main wires all four.
 	Records interface {
 		contextRecords
 		sessionRecords
+		panelRecords
 	}
-	Publish        func(context.Context, *pb.ContextDocument) error
-	PublishSession func(context.Context, *pb.Session) error
-	// NewProvider builds the model provider for a model alias; main wires the
-	// llmproxy client in, tests set Engine directly.
+	Publish         func(context.Context, *pb.ContextDocument) error
+	PublishSession  func(context.Context, *pb.Session) error
+	PublishPanelRun func(context.Context, *pb.PanelRun) error
+	// NewProvider builds the model provider for a model alias, and NewPanelist
+	// a panel seat's; main wires the llmproxy client into both, tests set
+	// Engine and Panel directly.
 	NewProvider func(modelAlias string) Provider
+	NewPanelist func(modelAlias string) Panelist
 
 	mu       sync.RWMutex
 	Sessions *SessionStore
 	Engine   *Engine
+	Panels   *PanelStore
+	// Panel is nil when no panel_model_aliases are configured.
+	Panel *Panel
 }
 
 var _ sm.Handler = (*Server)(nil)
@@ -45,13 +52,17 @@ var _ sm.Handler = (*Server)(nil)
 func (s *Server) DoppelgangerGrpcImpl() fe.DoppelgangerHandler { return s }
 
 // DoppelgangerConfig is the generated service manager's config delivery, at
-// start and on every change: model_alias takes effect here. An answer in
-// flight finishes with the engine it started with.
+// start and on every change: model_alias, panel_model_aliases and
+// principles_paths take effect here. An answer in flight finishes with the
+// engine (or panel) it started with.
 func (s *Server) DoppelgangerConfig(cfg *pb.Config) error {
 	if s.NewProvider == nil {
 		return errors.New("doppelganger: no provider constructor wired")
 	}
-	if s.Records == nil || s.Publish == nil || s.PublishSession == nil {
+	if len(cfg.GetPanelModelAliases()) > 0 && s.NewPanelist == nil {
+		return errors.New("doppelganger: panel_model_aliases set but no panelist constructor wired")
+	}
+	if s.Records == nil || s.Publish == nil || s.PublishSession == nil || s.PublishPanelRun == nil {
 		return errors.New("doppelganger: no record plane wired")
 	}
 	s.mu.Lock()
@@ -59,7 +70,19 @@ func (s *Server) DoppelgangerConfig(cfg *pb.Config) error {
 	if s.Sessions == nil {
 		s.Sessions = NewSessionStore(s.Records, s.PublishSession)
 	}
-	s.Engine = &Engine{Contexts: NewContextStore(s.Records, s.Publish), Provider: s.NewProvider(cfg.GetModelAlias())}
+	if s.Panels == nil {
+		s.Panels = NewPanelStore(s.Records, s.PublishPanelRun)
+	}
+	contexts := NewContextStore(s.Records, s.Publish)
+	s.Engine = &Engine{Contexts: contexts, Provider: s.NewProvider(cfg.GetModelAlias())}
+	s.Panel = nil
+	if aliases := cfg.GetPanelModelAliases(); len(aliases) > 0 {
+		panel := &Panel{Contexts: contexts, PrinciplesPaths: append([]string{}, cfg.GetPrinciplesPaths()...)}
+		for _, alias := range aliases {
+			panel.Seats = append(panel.Seats, PanelSeat{Alias: alias, Panelist: s.NewPanelist(alias)})
+		}
+		s.Panel = panel
+	}
 	return nil
 }
 
@@ -97,6 +120,14 @@ func (s *Server) current() (*SessionStore, *Engine) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.Sessions, s.Engine
+}
+
+// currentPanel is the panel (nil when none is configured) and the run store
+// the next panel RPC uses.
+func (s *Server) currentPanel() (*Panel, *PanelStore) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Panel, s.Panels
 }
 
 // Shutdown runs after the listener has drained. Sessions are written on every
@@ -237,4 +268,75 @@ func answerFromProto(r *pb.GenerateAnswerResponse) Answer {
 		Sources:         append([]string{}, r.GetSources()...),
 		Missing:         append([]string{}, r.GetMissing()...),
 	}
+}
+
+// GeneratePanelAnswer asks the panel and keeps the run. No panel, or no
+// principles to give it, is FailedPrecondition: the tenant's configuration or
+// context must change before it can answer.
+func (s *Server) GeneratePanelAnswer(ctx context.Context, caller *servicemanager.Caller, req *pb.GeneratePanelAnswerRequest) (*pb.GeneratePanelAnswerResponse, error) {
+	user, tenant, err := callerIdentity(caller)
+	if err != nil {
+		return nil, err
+	}
+	panel, runs := s.currentPanel()
+	if panel == nil {
+		return nil, status.Error(codes.FailedPrecondition, errNoPanel.Error())
+	}
+	run, err := panel.Run(ctx, tenant, PanelQuestion{
+		Question:                  req.GetQuestion(),
+		Situation:                 req.GetSituation(),
+		Person:                    req.GetPerson(),
+		Kind:                      req.GetQuestionKind(),
+		Reversible:                req.GetReversible(),
+		TouchesSecurityOrIdentity: req.GetTouchesSecurityOrIdentity(),
+	})
+	if errors.Is(err, errNoPanel) || errors.Is(err, errNoPrinciples) {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, err.Error())
+	}
+	if err := runs.Create(ctx, user, tenant, run); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &pb.GeneratePanelAnswerResponse{
+		PanelId:  run.GetPanelId(),
+		Options:  run.GetOptions(),
+		Answers:  run.GetAnswers(),
+		Failures: run.GetFailures(),
+		Result:   run.GetResult(),
+	}, nil
+}
+
+// UpdatePanelDecision records the person's choice on a run of the tenant. Who
+// may call it is the generated authorizer's decision (this RPC's grant).
+func (s *Server) UpdatePanelDecision(ctx context.Context, caller *servicemanager.Caller, req *pb.UpdatePanelDecisionRequest) (*pb.UpdatePanelDecisionResponse, error) {
+	_, tenant, err := callerIdentity(caller)
+	if err != nil {
+		return nil, err
+	}
+	_, runs := s.currentPanel()
+	switch err := runs.Decide(ctx, tenant, req.GetPanelId(), req.GetOptionId()); {
+	case errors.Is(err, ErrPanelRunNotFound):
+		return nil, status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, errUnknownOption):
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	case err != nil:
+		return nil, status.Error(codes.Unavailable, err.Error())
+	}
+	return &pb.UpdatePanelDecisionResponse{}, nil
+}
+
+// GetPanelTrackRecord scores the tenant's decided runs per model and question kind.
+func (s *Server) GetPanelTrackRecord(ctx context.Context, caller *servicemanager.Caller, _ *pb.GetPanelTrackRecordRequest) (*pb.GetPanelTrackRecordResponse, error) {
+	_, tenant, err := callerIdentity(caller)
+	if err != nil {
+		return nil, err
+	}
+	_, runs := s.currentPanel()
+	all, err := runs.List(ctx, tenant)
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, err.Error())
+	}
+	return panelTrackRecord(all), nil
 }

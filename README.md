@@ -29,6 +29,49 @@ to answer. Design and rules: `~/workspace/jody/agents.md`, "An agent that repres
 - The local client that authenticates as a user and calls through the gateway is a separate
   program, not written yet. `scripts/trials.sh` predates the fleet surface and needs it.
 
+## Panel mode (#10)
+
+`GeneratePanelAnswer` asks a panel of models from different vendors what the person would do
+about a design question, and answers with recommendations, confidence and dissent, marked
+**derived (panel)** (`PROVENANCE_DERIVED_PANEL`), never as the person's decision.
+
+- **Seats:** `Config.panel_model_aliases`, one llmproxy alias per panelist (`openai-latest`,
+  `xai-latest`, `gemini-latest`). llmproxy resolves each to its vendor's latest model; the panel
+  never names a model id. Every answer records the alias, the resolved model id and the time.
+  llmproxy does not return the resolved id yet (tacplus-dev/llmproxy#13), so it is empty until it
+  does.
+- **Phase 1** (alternatives): each seat gets only the question and the situation (no principles,
+  no context) and lists up to eight options. Code merges them by normalized title, keeps every
+  proposer, and always adds "Reuse what the platform already has" and "Do nothing / defer".
+- **Phase 2** (what would the person do): each seat answers once under each lens (reuse and
+  generator; invariants; failure from the other side; producer vs consumer; adversary) from the
+  merged options and the person's principles, in a fixed schema: ranked option ids, confidence
+  0–100, objections, would-change-mind. An answer outside the schema is asked again, then
+  reported as a failure, never counted.
+- **Principles only:** `Config.principles_paths` (files or directories of the tenant context).
+  Only those Markdown files go to a vendor, and only in phase 2. None configured or none matching:
+  the panel refuses (`FailedPrecondition`) before any vendor call.
+- **Tally** (plain code, reproducible): Borda points and first places per option, the top option,
+  agreement (share of answers ranking it first), every dissenting answer and every objection to
+  the top option word for word. `MAY_ACT` only when every answer agrees, no seat failed, and the
+  caller says the matter is reversible and touches neither security nor identity; otherwise
+  `TO_PERSON`.
+- **Track record:** every run is a `PanelRun` record in stratum. `UpdatePanelDecision`
+  (entitlement gated) records the option the person chose; `GetPanelTrackRecord` scores decided
+  runs per model (alias and resolved id) and per question kind.
+
+### Vendor data terms
+
+Before a vendor's seat goes live, its API's terms must be confirmed in writing: no training on
+inputs, and the shortest retention available. Jody confirms them (tracked on
+tacplus-dev/llmproxy#13); none is confirmed yet.
+
+| Vendor | No training on API inputs | Retention | Confirmed |
+|---|---|---|---|
+| OpenAI | not yet confirmed | not yet confirmed | no |
+| xAI | not yet confirmed | not yet confirmed | no |
+| Google (Gemini) | not yet confirmed | not yet confirmed | no |
+
 ## Build
 
 ```sh

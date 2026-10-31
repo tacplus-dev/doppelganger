@@ -19,15 +19,17 @@ import (
 // publish marks it), and a query over (tenant, scope, owner) lists the live
 // rows, as the real plane does with include_deleted unset.
 type fakeRecords struct {
-	mu       sync.Mutex
-	rows     map[string]*pb.ContextDocument
-	sessions map[string]*pb.Session
+	mu        sync.Mutex
+	rows      map[string]*pb.ContextDocument
+	sessions  map[string]*pb.Session
+	panelRuns map[string]*pb.PanelRun
 }
 
 func newFakeRecords() *fakeRecords {
 	return &fakeRecords{
-		rows:     map[string]*pb.ContextDocument{},
-		sessions: map[string]*pb.Session{},
+		rows:      map[string]*pb.ContextDocument{},
+		sessions:  map[string]*pb.Session{},
+		panelRuns: map[string]*pb.PanelRun{},
 	}
 }
 
@@ -57,6 +59,37 @@ func (f *fakeRecords) GetSessionRows(_ context.Context, req *query_pb.GetSession
 	}
 	r := rowsOf(out, req.GetLimit())
 	return &query_pb.GetSessionRowsResponse{Items: r.items, TotalCount: r.total, Truncated: r.truncated}, nil
+}
+
+func (f *fakeRecords) publishPanelRun(_ context.Context, r *pb.PanelRun) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.panelRuns[r.GetPanelId()] = proto.Clone(r).(*pb.PanelRun)
+	return nil
+}
+
+func (f *fakeRecords) GetPanelRunRows(_ context.Context, req *query_pb.GetPanelRunRowsRequest, _ ...grpc.CallOption) (*query_pb.GetPanelRunRowsResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	filter := req.GetFilter()
+	var out []*pb.PanelRun
+	for _, r := range f.panelRuns {
+		if r.GetDeleted() && !req.GetIncludeDeleted() {
+			continue
+		}
+		if filter.PanelId != nil && r.GetPanelId() != *filter.PanelId {
+			continue
+		}
+		if filter.TenantNamespace != nil && r.GetTenantNamespace() != *filter.TenantNamespace {
+			continue
+		}
+		if filter.Owner != nil && r.GetOwner() != *filter.Owner {
+			continue
+		}
+		out = append(out, proto.Clone(r).(*pb.PanelRun))
+	}
+	r := rowsOf(out, req.GetLimit())
+	return &query_pb.GetPanelRunRowsResponse{Items: r.items, TotalCount: r.total, Truncated: r.truncated}, nil
 }
 
 // rowsOf applies the plane's limit the way stratum does: default 100, at most

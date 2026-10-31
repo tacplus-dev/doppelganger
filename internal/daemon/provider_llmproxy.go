@@ -29,6 +29,15 @@ type LlmProxy struct {
 }
 
 func (p *LlmProxy) Complete(ctx context.Context, req Request) (json.RawMessage, error) {
+	raw, _, err := p.CompleteWithModel(ctx, req)
+	return raw, err
+}
+
+// CompleteWithModel is Complete for a panel seat. The model it names is
+// always empty for now: llmproxy does not yet say which model a "latest"
+// alias resolved to (tacplus-dev/llmproxy#13), so a panel answer records the
+// alias alone until it does.
+func (p *LlmProxy) CompleteWithModel(ctx context.Context, req Request) (json.RawMessage, string, error) {
 	resp, err := p.Client.GenerateCompletionAsService(ctx, &llmproxy_pb.GenerateCompletionRequest{
 		ModelAlias: p.ModelAlias,
 		System:     req.System,
@@ -38,14 +47,20 @@ func (p *LlmProxy) Complete(ctx context.Context, req Request) (json.RawMessage, 
 		}},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("llmproxy: %w", err)
+		return nil, "", fmt.Errorf("llmproxy: %w", err)
 	}
-	return structuredOutput(resp.GetText())
+	raw, err := structuredOutput(resp.GetText())
+	return raw, "", err
 }
 
-// userText is the whole context repo, the turn, and the output contract.
+// userText is the whole context repo (none for a panel seat, whose turn
+// carries all it is given), the turn, and the output contract.
 func userText(req Request) string {
-	return "# Repository\n\n" + req.Repo + req.Turn +
+	repo := ""
+	if req.Repo != "" {
+		repo = "# Repository\n\n" + req.Repo
+	}
+	return repo + req.Turn +
 		"\n\nReply with exactly one JSON document that satisfies this JSON Schema, and nothing else:\n" + req.Schema + "\n"
 }
 

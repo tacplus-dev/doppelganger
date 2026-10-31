@@ -152,6 +152,44 @@ func (c *ContextStore) Load(ctx context.Context, tenant, user string) (string, e
 	return b.String(), nil
 }
 
+// Principles renders the tenant context's Markdown files under paths (a file,
+// or a directory and everything in it) and nothing else: all of the context a
+// panelist is given. No paths, or none matching, is errNoPrinciples: the
+// panel fails closed rather than answer without the person's principles.
+func (c *ContextStore) Principles(ctx context.Context, tenant string, paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", errNoPrinciples
+	}
+	docs, err := c.list(ctx, tenant, scopeTenant, tenant)
+	if err != nil {
+		return "", err
+	}
+	sort.Slice(docs, func(i, j int) bool { return docs[i].GetPath() < docs[j].GetPath() })
+	var b strings.Builder
+	for _, d := range docs {
+		if strings.HasSuffix(d.GetPath(), ".md") && underAny(d.GetPath(), paths) {
+			fmt.Fprintf(&b, "<file path=%q>\n%s\n</file>\n\n", d.GetPath(), d.GetContent())
+		}
+	}
+	if b.Len() == 0 {
+		return "", errNoPrinciples
+	}
+	return b.String(), nil
+}
+
+// underAny reports whether path is one of prefixes or inside one of them as a
+// directory ("principles" and "principles/" both hold "principles/x.md", not
+// "principles-old/x.md").
+func underAny(path string, prefixes []string) bool {
+	for _, p := range prefixes {
+		p = strings.TrimSuffix(p, "/")
+		if p != "" && (path == p || strings.HasPrefix(path, p+"/")) {
+			return true
+		}
+	}
+	return false
+}
+
 // list reads one context's live rows: this instance's recent replacement if
 // it made one, else a point query on (tenant, scope, owner), paged through,
 // and closed.
