@@ -5,3 +5,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 
 - 2026-10-29 looper issue Bump golang.org/x/net to v0.62.0+ (GO-2026-6866, GO-2026-6860) (#8, 1931c4b)
 - 2026-10-29 looper issue go.mod: go 1.26.9 → 1.26.10 (crypto/x509 GO-2026-6809, reachable) (#9, 283607c)
+- 2026-11-02 looper issue Context repo moved to github.com/jodydadescott/jody: PRs instead of MRs; main is not server-protected (#11, 15d9801)
