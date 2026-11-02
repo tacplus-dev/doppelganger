@@ -14,10 +14,16 @@ his words).
 - Code: `~/workspace/github/tacplus-dev/doppelganger` (moved 2026-10-23 from gitlab/seabeam/tools/). Remote = github.com/tacplus-dev/doppelganger
   (PRIVATE, org tacplus-dev). Module `github.com/tacplus-dev/doppelganger`; generated output in `tacplus/` (git-ignored). Branches:
   `main`, `engine-provider` (all of 2026-10-23's work; not merged to main yet).
-- Context repo (data): `~/workspace/jody`, origin = **gitlab.com/secondstar/jody** (private project 87501898 in
-  private top-level group `secondstar`, id 144515190, "Second Star", Free tier). `main` is protected: push = No one,
-  merge = Maintainers (Jody), no force. Local main == origin/main (444f2f2). `inbox/` is untracked on purpose
-  (unreviewed material). Changes already flow as MRs (branch `decisions-2026-10-15` was merged). No open MRs.
+- Context repo (data): `~/workspace/jody`, origin = **github.com/jodydadescott/jody** (private, Jody's personal account,
+  GitHub Free), with full history and both branches (`main`, `inbox-drafts-2026-10-08`). Moved 2026-11-02 (#11) from
+  gitlab.com/secondstar/jody (project 87501898), now archived and read-only there; the move follows the rule that GitHub
+  holds tacplus-dev plus Jody's personal private repos. `inbox/` is untracked on purpose (unreviewed material).
+  Changes flow as PRs (on GitLab they were MRs; branch `decisions-2026-10-15` was merged there).
+  **`main` is NOT protected by the server:** GitHub Free cannot give a private repo branch protection or rulesets
+  ("Upgrade to GitHub Pro"), so nothing on GitHub stops a direct push to `main` (on GitLab, push = No one). Until Jody
+  decides on GitHub Pro, doppelganger itself must only ever open PRs and never push to `main`; today it writes to no git
+  repository at all, and `internal/daemon/nopush_test.go` fails on any git or GitHub write path added to it (such a
+  writer must come with its own test that it only pushes review branches and opens PRs). Access: see the README.
 - Daemon: launchd `com.seabeam.doppelganger` (plist in `dist/`), runs `/Users/jody/go/bin/doppelganger daemon
   --claude /Users/jody/.local/bin/claude`, is loaded and running. Socket `/tmp/doppelganger.sock` (0600).
   Session state: one JSON per session under `~/.doppelganger/sessions/` (39 files; no stale-session cleanup yet).
@@ -55,10 +61,11 @@ his words).
    round: members see all answers + sources + objection, hold or revise and say why (`would_change_mind`), chair
    re-summarizes noting who moved. Open: cap on rounds (I proposed config, default 2).
 4. **Recorded panel answers**, reused by the chair for similar questions. They are not sources: reuse is marked
-   DERIVED "from precedent" (unreviewed ones "pending review", linked to their MR), never quotable as him, and only
+   DERIVED "from precedent" (unreviewed ones "pending review", linked to their PR), never quotable as him, and only
    reused while the cited files are unchanged at the recorded commit (staleness check in code). Each record names
    the record it reuses.
-5. **Review = one MR per recorded answer** in secondstar/jody. Merge = accept (becomes a permanent source, his
+5. **Review = one PR per recorded answer** in jodydadescott/jody, from its own branch into `main`; doppelganger
+   never pushes to `main` (unenforced by the server, above). Merge = accept (becomes a permanent source, his
    words); edit-then-merge = his version wins; close = reject (deleted from the store). Jody reviews ~daily.
    Open: reuse while pending (his last words were "edited then merged", ambiguous between strict and
    normal-flow; ask).
@@ -92,8 +99,10 @@ his words).
       plist to `--provider anthropic` and delete `provider_claude.go` and `--claude`. OpenAI/Grok/Gemini adapters after that.
 - [ ] Round table + chair triage + `reconsider` (items 2–3). Proto change: new rpc + Answer fields for member
       positions / precedent reference.
-- [ ] Recorded answers store + staleness check + MR creation into secondstar/jody (items 4–5). Needs a
-      write-capable credential for the daemon (deploy key or project token); `main` protection already in place.
+- [ ] Recorded answers store + staleness check + PR creation into jodydadescott/jody (items 4–5). Needs the
+      daemon's GitHub App (README, "Context repo access"); its write permission also reaches `main` and the server
+      protects nothing, so the writer refuses `main` in code and is tested for it (replacing the source check in
+      `nopush_test.go`).
 - [ ] Disclosure classes: sort `life.md`, `legal/`, `code.md`, `working-with-me.md` (item 6); enforce in code
       (excluded files never loaded; understanding-only files output-checked).
 - [ ] Stale-session cleanup under `~/.doppelganger/sessions/`.

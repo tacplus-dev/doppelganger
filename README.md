@@ -1,6 +1,6 @@
 # doppelganger
 
-Answers questions on Jody's behalf from his context repo (`~/workspace/jody`). Its only role is
+Answers questions on Jody's behalf from his context repo (github.com/jodydadescott/jody, locally `~/workspace/jody`). Its only role is
 to answer. Design and rules: `~/workspace/jody/agents.md`, "An agent that represents him".
 
 ## Shape
@@ -28,6 +28,27 @@ to answer. Design and rules: `~/workspace/jody/agents.md`, "An agent that repres
   engine re-answers with the new information.
 - The local client that authenticates as a user and calls through the gateway is a separate
   program, not written yet. `scripts/trials.sh` predates the fleet surface and needs it.
+
+## Context repo access
+
+Jody's context repo is **github.com/jodydadescott/jody** (private; moved 2026-11-02 from
+GitLab, #11). Today doppelganger does not read it: its context arrives as `ContextDocument`
+records (above). When it reads the repo itself and opens a review PR per recorded answer
+(DOPPELGANGER-STATE.md, items 4–5), it does so as:
+
+- **What:** a GitHub App of its own (none exists yet; Jody creates it), installed **only** on
+  `jodydadescott/jody`, the platform's pattern for GitHub (tacplus-dev/roadmap
+  `items/looper-identity-2026-10-29.md`). GitHub accepts no external OIDC, so there is no
+  federation to GitHub itself; the next best: the App's private key is a non-exportable Cloud KMS
+  key that only doppelganger's workload identity (through Workload Identity Federation) may sign
+  with, and each use trades the signed JWT for a one-hour installation token. No key file, no
+  personal token.
+- **Scope:** read the repo, plus PR creation: metadata read, contents write (a PR needs its branch
+  pushed), pull requests write. Nothing else.
+- **Not enforced by GitHub:** contents write reaches `main` too, and GitHub Free gives a private
+  repo no branch protection or rulesets. Doppelganger only ever pushes a review branch and opens
+  a PR; it never pushes to `main`. Today it has no git or GitHub write path at all, and
+  `internal/daemon/nopush_test.go` fails if one is added without its own test of that rule.
 
 ## Panel mode (#10)
 
