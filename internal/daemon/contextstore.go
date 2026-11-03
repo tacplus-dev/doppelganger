@@ -91,6 +91,7 @@ func (c *ContextStore) Replace(ctx context.Context, tenant, scope, owner string,
 			Path:            f.GetPath(),
 			Content:         f.GetContent(),
 			UpdatedAtMs:     now,
+			TraceId:         traceID(ctx),
 		}
 		if err := c.publish(ctx, doc); err != nil {
 			return 0, 0, fmt.Errorf("publishing context document %q: %w", f.GetPath(), err)
@@ -113,6 +114,7 @@ func (c *ContextStore) Replace(ctx context.Context, tenant, scope, owner string,
 			Path:            old.GetPath(),
 			UpdatedAtMs:     now,
 			Deleted:         true,
+			TraceId:         traceID(ctx),
 		}
 		if err := c.publish(ctx, gone); err != nil {
 			return 0, 0, fmt.Errorf("retiring context document %q: %w", old.GetPath(), err)
@@ -207,8 +209,9 @@ func (c *ContextStore) list(ctx context.Context, tenant, scope, owner string) ([
 	}
 	c.mu.Unlock()
 	resp, err := c.records.GetContextDocumentRows(ctx, &query_pb.GetContextDocumentRowsRequest{
-		Filter: &query_pb.ContextDocumentFilter{TenantNamespace: &tenant, Scope: &scope, Owner: &owner},
-		Limit:  maxContextDocuments,
+		Filter:  &query_pb.ContextDocumentFilter{TenantNamespace: &tenant, Scope: &scope, Owner: &owner},
+		Limit:   maxContextDocuments,
+		TraceId: traceID(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reading ContextDocument rows: %w", err)

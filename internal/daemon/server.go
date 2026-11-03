@@ -160,6 +160,7 @@ func callerIdentity(caller *servicemanager.Caller) (user, tenant string, err err
 }
 
 func (s *Server) CreateSession(ctx context.Context, caller *servicemanager.Caller, req *pb.CreateSessionRequest) (*pb.CreateSessionResponse, error) {
+	ctx = withTraceID(ctx, req.GetTraceId())
 	user, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -173,6 +174,7 @@ func (s *Server) CreateSession(ctx context.Context, caller *servicemanager.Calle
 }
 
 func (s *Server) UpdateSession(ctx context.Context, caller *servicemanager.Caller, req *pb.UpdateSessionRequest) (*pb.UpdateSessionResponse, error) {
+	ctx = withTraceID(ctx, req.GetTraceId())
 	user, _, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -186,6 +188,7 @@ func (s *Server) UpdateSession(ctx context.Context, caller *servicemanager.Calle
 
 // UpdateContext replaces the caller's own context; it can reach nobody else's.
 func (s *Server) UpdateContext(ctx context.Context, caller *servicemanager.Caller, req *pb.UpdateContextRequest) (*pb.UpdateContextResponse, error) {
+	ctx = withTraceID(ctx, req.GetTraceId())
 	user, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -201,6 +204,7 @@ func (s *Server) UpdateContext(ctx context.Context, caller *servicemanager.Calle
 // UpdateTenantContext replaces the tenant's shared context. Who may call it is
 // the generated authorizer's decision (this RPC's grant); here it is only done.
 func (s *Server) UpdateTenantContext(ctx context.Context, caller *servicemanager.Caller, req *pb.UpdateTenantContextRequest) (*pb.UpdateTenantContextResponse, error) {
+	ctx = withTraceID(ctx, req.GetTraceId())
 	_, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -221,6 +225,7 @@ func contextError(err error) error {
 }
 
 func (s *Server) GenerateAnswer(ctx context.Context, caller *servicemanager.Caller, req *pb.GenerateAnswerRequest) (*pb.GenerateAnswerResponse, error) {
+	ctx = withTraceID(ctx, req.GetTraceId())
 	user, _, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -278,6 +283,7 @@ func answerFromProto(r *pb.GenerateAnswerResponse) Answer {
 // principles to give it, is FailedPrecondition: the tenant's configuration or
 // context must change before it can answer.
 func (s *Server) GeneratePanelAnswer(ctx context.Context, caller *servicemanager.Caller, req *pb.GeneratePanelAnswerRequest) (*pb.GeneratePanelAnswerResponse, error) {
+	ctx = withTraceID(ctx, req.GetTraceId())
 	user, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -321,6 +327,7 @@ func (s *Server) GeneratePanelAnswer(ctx context.Context, caller *servicemanager
 // UpdatePanelDecision records the person's choice on a run of the tenant. Who
 // may call it is the generated authorizer's decision (this RPC's grant).
 func (s *Server) UpdatePanelDecision(ctx context.Context, caller *servicemanager.Caller, req *pb.UpdatePanelDecisionRequest) (*pb.UpdatePanelDecisionResponse, error) {
+	ctx = withTraceID(ctx, req.GetTraceId())
 	_, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -338,7 +345,8 @@ func (s *Server) UpdatePanelDecision(ctx context.Context, caller *servicemanager
 }
 
 // GetPanelTrackRecord scores the tenant's decided runs per model and question kind.
-func (s *Server) GetPanelTrackRecord(ctx context.Context, caller *servicemanager.Caller, _ *pb.GetPanelTrackRecordRequest) (*pb.GetPanelTrackRecordResponse, error) {
+func (s *Server) GetPanelTrackRecord(ctx context.Context, caller *servicemanager.Caller, req *pb.GetPanelTrackRecordRequest) (*pb.GetPanelTrackRecordResponse, error) {
+	ctx = withTraceID(ctx, req.GetTraceId())
 	_, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err

@@ -7,14 +7,17 @@ import (
 	"testing"
 )
 
-// scriptedProvider returns its replies in order and records every request.
+// scriptedProvider returns its replies in order and records every request
+// and the trace_id its context carried.
 type scriptedProvider struct {
 	replies []any // json.RawMessage or error
 	reqs    []Request
+	traces  []string
 }
 
-func (p *scriptedProvider) Complete(_ context.Context, req Request) (json.RawMessage, error) {
+func (p *scriptedProvider) Complete(ctx context.Context, req Request) (json.RawMessage, error) {
 	p.reqs = append(p.reqs, req)
+	p.traces = append(p.traces, traceID(ctx))
 	if len(p.replies) == 0 {
 		return nil, errStructuredOutput
 	}

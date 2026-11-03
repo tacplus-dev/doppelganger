@@ -24,20 +24,22 @@ import (
 
 // fakeModerator is the panel's moderator behind a fake llmproxy: each of its
 // three steps answers from a function of the request (nil: the step fails),
-// and every request is recorded.
+// and every request is recorded with the trace_id its context carried.
 type fakeModerator struct {
 	model   string
 	frame   func(req Request) (json.RawMessage, error)
 	merge   func(req Request) (json.RawMessage, error)
 	summary func(req Request) (json.RawMessage, error)
 
-	mu   sync.Mutex
-	reqs []Request
+	mu     sync.Mutex
+	reqs   []Request
+	traces []string
 }
 
-func (f *fakeModerator) CompleteWithModel(_ context.Context, req Request) (json.RawMessage, string, error) {
+func (f *fakeModerator) CompleteWithModel(ctx context.Context, req Request) (json.RawMessage, string, error) {
 	f.mu.Lock()
 	f.reqs = append(f.reqs, req)
+	f.traces = append(f.traces, traceID(ctx))
 	f.mu.Unlock()
 	var reply func(Request) (json.RawMessage, error)
 	switch req.Schema {
@@ -409,18 +411,24 @@ func TestValidSummary(t *testing.T) {
 }
 
 // recordingConn is a fake llmproxy connection: it keeps every request the
-// generated client sends and answers each with reply.
+// generated client sends and answers each with the next of replies, then
+// with reply.
 type recordingConn struct {
-	reply *llmproxy_pb.GenerateCompletionResponse
-	mu    sync.Mutex
-	sent  []*llmproxy_pb.GenerateCompletionRequest
+	reply   *llmproxy_pb.GenerateCompletionResponse
+	replies []*llmproxy_pb.GenerateCompletionResponse
+	mu      sync.Mutex
+	sent    []*llmproxy_pb.GenerateCompletionRequest
 }
 
 func (c *recordingConn) Invoke(_ context.Context, _ string, args, reply any, _ ...grpc.CallOption) error {
 	c.mu.Lock()
 	c.sent = append(c.sent, proto.Clone(args.(proto.Message)).(*llmproxy_pb.GenerateCompletionRequest))
+	next := c.reply
+	if len(c.replies) > 0 {
+		next, c.replies = c.replies[0], c.replies[1:]
+	}
 	c.mu.Unlock()
-	proto.Merge(reply.(proto.Message), c.reply)
+	proto.Merge(reply.(proto.Message), next)
 	return nil
 }
 

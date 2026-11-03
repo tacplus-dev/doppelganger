@@ -88,8 +88,9 @@ func (s *PanelStore) Decide(ctx context.Context, tenant, id, optionID string) er
 // instance's recent publishes over them.
 func (s *PanelStore) List(ctx context.Context, tenant string) ([]*pb.PanelRun, error) {
 	resp, err := s.records.GetPanelRunRows(ctx, &query_pb.GetPanelRunRowsRequest{
-		Filter: &query_pb.PanelRunFilter{TenantNamespace: &tenant},
-		Limit:  maxPanelRuns,
+		Filter:  &query_pb.PanelRunFilter{TenantNamespace: &tenant},
+		Limit:   maxPanelRuns,
+		TraceId: traceID(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reading PanelRun rows: %w", err)
@@ -126,8 +127,11 @@ func (s *PanelStore) List(ctx context.Context, tenant string) ([]*pb.PanelRun, e
 // maxPanelRuns bounds the track record's read: the direct read's cap.
 const maxPanelRuns = 1000
 
+// write publishes the whole run under the trace_id of the request changing
+// it, which for a decision is not the one the run was asked under.
 func (s *PanelStore) write(ctx context.Context, run *pb.PanelRun) error {
 	run.UpdatedAtMs = s.now().UnixMilli()
+	run.TraceId = traceID(ctx)
 	if err := s.publish(ctx, run); err != nil {
 		return fmt.Errorf("publishing panel run %s: %w", run.GetPanelId(), err)
 	}
@@ -163,8 +167,9 @@ func (s *PanelStore) read(ctx context.Context, tenant, id string) (*pb.PanelRun,
 	} else {
 		// Limit 2: the key is unique, so a second row means the read cannot be trusted.
 		resp, err := s.records.GetPanelRunRows(ctx, &query_pb.GetPanelRunRowsRequest{
-			Filter: &query_pb.PanelRunFilter{PanelId: &id},
-			Limit:  2,
+			Filter:  &query_pb.PanelRunFilter{PanelId: &id},
+			Limit:   2,
+			TraceId: traceID(ctx),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("reading PanelRun row: %w", err)

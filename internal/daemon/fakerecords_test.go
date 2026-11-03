@@ -17,12 +17,14 @@ import (
 // fakeRecords stands in for stratum behind the generated record plane: a
 // published ContextDocument lands on its row by document_id (a deleted
 // publish marks it), and a query over (tenant, scope, owner) lists the live
-// rows, as the real plane does with include_deleted unset.
+// rows, as the real plane does with include_deleted unset. Every call keeps
+// the trace_id it carried, by call name.
 type fakeRecords struct {
 	mu        sync.Mutex
 	rows      map[string]*pb.ContextDocument
 	sessions  map[string]*pb.Session
 	panelRuns map[string]*pb.PanelRun
+	traces    map[string][]string
 }
 
 func newFakeRecords() *fakeRecords {
@@ -30,12 +32,24 @@ func newFakeRecords() *fakeRecords {
 		rows:      map[string]*pb.ContextDocument{},
 		sessions:  map[string]*pb.Session{},
 		panelRuns: map[string]*pb.PanelRun{},
+		traces:    map[string][]string{},
 	}
+}
+
+// takeTraces is the trace_id of every call since the last take, by call
+// name, and forgets them.
+func (f *fakeRecords) takeTraces() map[string][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := f.traces
+	f.traces = map[string][]string{}
+	return out
 }
 
 func (f *fakeRecords) publishSession(_ context.Context, s *pb.Session) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.traces["publishSession"] = append(f.traces["publishSession"], s.GetTraceId())
 	f.sessions[s.GetSessionId()] = proto.Clone(s).(*pb.Session)
 	return nil
 }
@@ -43,6 +57,7 @@ func (f *fakeRecords) publishSession(_ context.Context, s *pb.Session) error {
 func (f *fakeRecords) GetSessionRows(_ context.Context, req *query_pb.GetSessionRowsRequest, _ ...grpc.CallOption) (*query_pb.GetSessionRowsResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.traces["GetSessionRows"] = append(f.traces["GetSessionRows"], req.GetTraceId())
 	filter := req.GetFilter()
 	var out []*pb.Session
 	for _, s := range f.sessions {
@@ -64,6 +79,7 @@ func (f *fakeRecords) GetSessionRows(_ context.Context, req *query_pb.GetSession
 func (f *fakeRecords) publishPanelRun(_ context.Context, r *pb.PanelRun) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.traces["publishPanelRun"] = append(f.traces["publishPanelRun"], r.GetTraceId())
 	f.panelRuns[r.GetPanelId()] = proto.Clone(r).(*pb.PanelRun)
 	return nil
 }
@@ -71,6 +87,7 @@ func (f *fakeRecords) publishPanelRun(_ context.Context, r *pb.PanelRun) error {
 func (f *fakeRecords) GetPanelRunRows(_ context.Context, req *query_pb.GetPanelRunRowsRequest, _ ...grpc.CallOption) (*query_pb.GetPanelRunRowsResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.traces["GetPanelRunRows"] = append(f.traces["GetPanelRunRows"], req.GetTraceId())
 	filter := req.GetFilter()
 	var out []*pb.PanelRun
 	for _, r := range f.panelRuns {
@@ -117,6 +134,7 @@ type rows[T any] struct {
 func (f *fakeRecords) publish(_ context.Context, d *pb.ContextDocument) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.traces["publish"] = append(f.traces["publish"], d.GetTraceId())
 	f.rows[d.GetDocumentId()] = proto.Clone(d).(*pb.ContextDocument)
 	return nil
 }
@@ -132,6 +150,7 @@ func (f *fakeRecords) seed(tenant, scope, owner, path, content string) {
 func (f *fakeRecords) GetContextDocumentRows(_ context.Context, req *query_pb.GetContextDocumentRowsRequest, _ ...grpc.CallOption) (*query_pb.GetContextDocumentRowsResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.traces["GetContextDocumentRows"] = append(f.traces["GetContextDocumentRows"], req.GetTraceId())
 	filter := req.GetFilter()
 	var out []*pb.ContextDocument
 	for _, d := range f.rows {

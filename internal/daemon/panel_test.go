@@ -19,20 +19,23 @@ import (
 )
 
 // fakePanelist is one panel seat behind a fake llmproxy: phase 1 and phase 2
-// replies come from functions of the request, every request is recorded, and
-// it reports model as the resolved model id. Calls arrive concurrently.
+// replies come from functions of the request, every request is recorded with
+// the trace_id its context carried, and it reports model as the resolved
+// model id. Calls arrive concurrently.
 type fakePanelist struct {
 	model  string
 	phase1 func(req Request) (json.RawMessage, error)
 	phase2 func(req Request) (json.RawMessage, error)
 
-	mu   sync.Mutex
-	reqs []Request
+	mu     sync.Mutex
+	reqs   []Request
+	traces []string
 }
 
-func (f *fakePanelist) CompleteWithModel(_ context.Context, req Request) (json.RawMessage, string, error) {
+func (f *fakePanelist) CompleteWithModel(ctx context.Context, req Request) (json.RawMessage, string, error) {
 	f.mu.Lock()
 	f.reqs = append(f.reqs, req)
+	f.traces = append(f.traces, traceID(ctx))
 	f.mu.Unlock()
 	reply := f.phase2
 	if req.Schema == panelOptionsSchema {

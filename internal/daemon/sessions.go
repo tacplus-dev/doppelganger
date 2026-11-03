@@ -127,6 +127,7 @@ func (s *SessionStore) AppendTurn(ctx context.Context, id, owner string, turn Tu
 // write publishes the whole session and remembers it for recentTTL.
 func (s *SessionStore) write(ctx context.Context, sess *Session) error {
 	rec := toRecord(sess, s.now().UnixMilli())
+	rec.TraceId = traceID(ctx)
 	if err := s.publish(ctx, rec); err != nil {
 		return fmt.Errorf("publishing session %s: %w", sess.ID, err)
 	}
@@ -158,8 +159,9 @@ func (s *SessionStore) read(ctx context.Context, id string) (*pb.Session, error)
 	// Limit 2, not 1: the key is unique, so a second row means the read cannot
 	// be trusted, and asking for one row could not tell the difference.
 	resp, err := s.records.GetSessionRows(ctx, &query_pb.GetSessionRowsRequest{
-		Filter: &query_pb.SessionFilter{SessionId: &id},
-		Limit:  2,
+		Filter:  &query_pb.SessionFilter{SessionId: &id},
+		Limit:   2,
+		TraceId: traceID(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reading Session row: %w", err)

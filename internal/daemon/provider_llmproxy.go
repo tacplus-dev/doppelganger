@@ -42,6 +42,7 @@ func (p *LlmProxy) CompleteWithModel(ctx context.Context, req Request) (json.Raw
 	resp, err := p.Client.GenerateCompletionAsService(ctx, &llmproxy_pb.GenerateCompletionRequest{
 		ModelAlias: p.ModelAlias,
 		System:     req.System,
+		TraceId:    traceID(ctx),
 		Messages: []*llmproxy_pb.Message{{
 			Role:    llmproxy_pb.Role_ROLE_USER,
 			Content: []*llmproxy_pb.ContentBlock{{Block: &llmproxy_pb.ContentBlock_Text{Text: userText(req)}}},
