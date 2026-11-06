@@ -9,3 +9,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-03 looper issue Trace propagation: no handler forwards its inbound trace_id to llmproxy, the record query plane or its publishes, and none is tested (#12, c1f62db)
 - 2026-11-06 looper issue Declare the tacplus floor: 2.4 (#1)
 - 2026-11-06 looper issue Base image: alpine:3.22 → alpine:3.24 (latest Alpine line) (#5)
+- 2026-11-06 looper issue Write records to Stratum through its write surface: Stratum no longer ingests them from the event bus (#7, 89f440c)
