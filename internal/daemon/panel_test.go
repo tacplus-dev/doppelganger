@@ -94,7 +94,7 @@ func newPanel(t *testing.T, seats ...*fakePanelist) (*Panel, *fakeRecords) {
 	rec.seed(acme, scopeTenant, acme, "personal/health.md", "PRIVATE: not for any vendor")
 	rec.seed(acme, scopeUser, "alice", "me.md", "ALICE PRIVATE")
 	p := &Panel{
-		Contexts:        NewContextStore(rec, rec.publish),
+		Contexts:        NewContextStore(rec),
 		PrinciplesPaths: []string{"principles/"},
 		now:             func() time.Time { return time.UnixMilli(1793491200000) },
 	}
@@ -115,7 +115,7 @@ func TestPanelMergesOptionsWithTraceability(t *testing.T) {
 	a := &fakePanelist{model: "a-1", phase1: proposals("Build it on gRPC", "Custom TCP framing"), phase2: ranking(80, "", "Build it on gRPC", "Do nothing / defer")}
 	b := &fakePanelist{model: "b-1", phase1: proposals("build it on gRPC.", "Reuse what the platform already has"), phase2: ranking(70, "", "Build it on gRPC", "Do nothing / defer")}
 	p, _ := newPanel(t, a, b)
-	run, err := p.Run(context.Background(), acme, grpcQuestion)
+	run, err := p.Run(acmeCtx(), acme, grpcQuestion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func proposers(o *pb.PanelOption) string {
 func TestPanelSendsOnlyQuestionSituationAndPrinciples(t *testing.T) {
 	a := &fakePanelist{model: "a-1", phase1: proposals("Build it on gRPC"), phase2: ranking(80, "", "Build it on gRPC")}
 	p, _ := newPanel(t, a)
-	if _, err := p.Run(context.Background(), acme, grpcQuestion); err != nil {
+	if _, err := p.Run(acmeCtx(), acme, grpcQuestion); err != nil {
 		t.Fatal(err)
 	}
 	if len(a.reqs) != 1+len(panelLenses) {
@@ -201,7 +201,7 @@ func TestPanelFailsClosedWithoutPrinciples(t *testing.T) {
 	for _, paths := range [][]string{nil, {"nothing/here/"}, {"principles"}} {
 		p, _ := newPanel(t, a)
 		p.PrinciplesPaths = paths
-		_, err := p.Run(context.Background(), acme, grpcQuestion)
+		_, err := p.Run(acmeCtx(), acme, grpcQuestion)
 		if paths != nil && paths[0] == "principles" {
 			// A directory named without its slash is still that directory.
 			if err != nil {
@@ -217,7 +217,7 @@ func TestPanelFailsClosedWithoutPrinciples(t *testing.T) {
 	p, rec := newPanel(t, a)
 	rec.seed(acme, scopeTenant, acme, "principles-old/x.md", "OLD PRIVATE")
 	before := len(a.reqs)
-	if _, err := p.Run(context.Background(), acme, grpcQuestion); err != nil {
+	if _, err := p.Run(acmeCtx(), acme, grpcQuestion); err != nil {
 		t.Fatal(err)
 	}
 	for _, req := range a.reqs[before:] {
@@ -234,7 +234,7 @@ func TestPanelFailsClosedBeforeAnyVendorCall(t *testing.T) {
 	a := &fakePanelist{model: "a-1", phase1: proposals("x"), phase2: ranking(1, "", "x")}
 	p, _ := newPanel(t, a)
 	p.PrinciplesPaths = []string{"missing.md"}
-	if _, err := p.Run(context.Background(), acme, grpcQuestion); !errors.Is(err, errNoPrinciples) {
+	if _, err := p.Run(acmeCtx(), acme, grpcQuestion); !errors.Is(err, errNoPrinciples) {
 		t.Fatalf("err = %v", err)
 	}
 	if len(a.reqs) != 0 {
@@ -242,7 +242,7 @@ func TestPanelFailsClosedBeforeAnyVendorCall(t *testing.T) {
 	}
 	p.Seats = nil
 	p.PrinciplesPaths = []string{"principles/"}
-	if _, err := p.Run(context.Background(), acme, grpcQuestion); !errors.Is(err, errNoPanel) {
+	if _, err := p.Run(acmeCtx(), acme, grpcQuestion); !errors.Is(err, errNoPanel) {
 		t.Fatalf("no seats err = %v", err)
 	}
 }
@@ -253,7 +253,7 @@ func TestPanelTallyAndDissent(t *testing.T) {
 	a := &fakePanelist{model: "a-1", phase1: proposals("Build it on gRPC", "Custom TCP framing"), phase2: ranking(90, "a binary stream already exists", "Build it on gRPC", "Custom TCP framing")}
 	b := &fakePanelist{model: "b-1", phase1: proposals("Build it on gRPC"), phase2: ranking(60, "gRPC is banned", "Custom TCP framing", "Build it on gRPC")}
 	p, _ := newPanel(t, a, b)
-	run, err := p.Run(context.Background(), acme, grpcQuestion)
+	run, err := p.Run(acmeCtx(), acme, grpcQuestion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestPanelDisposition(t *testing.T) {
 		{"security", PanelQuestion{Question: "q", Situation: "s", Reversible: true, TouchesSecurityOrIdentity: true}, pb.PanelDisposition_PANEL_DISPOSITION_TO_PERSON},
 	} {
 		p, _ := newPanel(t, agree()...)
-		run, err := p.Run(context.Background(), acme, c.q)
+		run, err := p.Run(acmeCtx(), acme, c.q)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -339,7 +339,7 @@ func TestPanelDisposition(t *testing.T) {
 	seats := agree()
 	seats = append(seats, &fakePanelist{model: "c-1", phase1: func(Request) (json.RawMessage, error) { return nil, errors.New("vendor down") }})
 	p, _ := newPanel(t, seats...)
-	run, err := p.Run(context.Background(), acme, PanelQuestion{Question: "q", Situation: "s", Reversible: true})
+	run, err := p.Run(acmeCtx(), acme, PanelQuestion{Question: "q", Situation: "s", Reversible: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestPanelRejectsInvalidRankings(t *testing.T) {
 		return json.RawMessage(`{"ranked_option_ids":["O1","O1"],"confidence":500,"objections":[],"would_change_mind":""}`), nil
 	}}
 	p, _ := newPanel(t, a, b)
-	run, err := p.Run(context.Background(), acme, grpcQuestion)
+	run, err := p.Run(acmeCtx(), acme, grpcQuestion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,14 +433,14 @@ func TestServerPanelRunDecisionAndTrackRecord(t *testing.T) {
 	a := &fakePanelist{model: "a-1", phase1: proposals("Build it on gRPC", "Custom TCP framing"), phase2: ranking(90, "", "Build it on gRPC", "Custom TCP framing")}
 	b := &fakePanelist{model: "b-1", phase1: proposals("Build it on gRPC"), phase2: ranking(60, "", "Custom TCP framing", "Build it on gRPC")}
 	panel, rec := newPanel(t, a, b)
-	s := &Server{Panel: panel, Panels: NewPanelStore(rec, rec.publishPanelRun)}
-	ctx := context.Background()
+	s := &Server{Panel: panel, Panels: NewPanelStore(rec)}
+	ctx := acmeCtx()
 	alice := asUser("alice")
 
-	if _, err := s.GeneratePanelAnswer(ctx, nil, &pb.GeneratePanelAnswerRequest{Question: "q", Situation: "s"}); status.Code(err) != codes.Unauthenticated {
+	if _, err := s.GeneratePanelAnswer(ctx, nil, &pb.GeneratePanelAnswerRequest{Tenant: acmeTid, Question: "q", Situation: "s"}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("no caller err = %v", err)
 	}
-	resp, err := s.GeneratePanelAnswer(ctx, alice, &pb.GeneratePanelAnswerRequest{
+	resp, err := s.GeneratePanelAnswer(ctx, alice, &pb.GeneratePanelAnswerRequest{Tenant: acmeTid,
 		Question: grpcQuestion.Question, Situation: grpcQuestion.Situation, QuestionKind: "security-design", Reversible: true,
 	})
 	if err != nil {
@@ -455,25 +455,25 @@ func TestServerPanelRunDecisionAndTrackRecord(t *testing.T) {
 	}
 
 	// Nothing decided yet: nothing scored.
-	tr, err := s.GetPanelTrackRecord(ctx, alice, &pb.GetPanelTrackRecordRequest{})
+	tr, err := s.GetPanelTrackRecord(ctx, alice, &pb.GetPanelTrackRecordRequest{Tenant: acmeTid})
 	if err != nil || tr.GetDecidedRuns() != 0 || len(tr.GetRecords()) != 0 {
 		t.Fatalf("track record before a decision = %v, %v", tr, err)
 	}
-	if _, err := s.UpdatePanelDecision(ctx, asUser("jody"), &pb.UpdatePanelDecisionRequest{PanelId: resp.GetPanelId(), OptionId: "O99"}); status.Code(err) != codes.InvalidArgument {
+	if _, err := s.UpdatePanelDecision(ctx, asUser("jody"), &pb.UpdatePanelDecisionRequest{Tenant: acmeTid, PanelId: resp.GetPanelId(), OptionId: "O99"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unknown option err = %v", err)
 	}
-	if _, err := s.UpdatePanelDecision(ctx, asUser("jody"), &pb.UpdatePanelDecisionRequest{PanelId: "0123456789abcdef0123456789abcdef", OptionId: "O3"}); status.Code(err) != codes.NotFound {
+	if _, err := s.UpdatePanelDecision(ctx, asUser("jody"), &pb.UpdatePanelDecisionRequest{Tenant: acmeTid, PanelId: "0123456789abcdef0123456789abcdef", OptionId: "O3"}); status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown run err = %v", err)
 	}
-	if _, err := s.UpdatePanelDecision(ctx, asUser("jody"), &pb.UpdatePanelDecisionRequest{PanelId: resp.GetPanelId(), OptionId: "O3"}); err != nil {
+	if _, err := s.UpdatePanelDecision(ctx, asUser("jody"), &pb.UpdatePanelDecisionRequest{Tenant: acmeTid, PanelId: resp.GetPanelId(), OptionId: "O3"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := rec.panelRuns[resp.GetPanelId()]; got.GetDecidedOptionId() != "O3" || got.GetDecidedAtMs() == 0 {
 		t.Fatalf("decision not stored: %v", got)
 	}
 	// A second instance with no cache reads the same record from the store.
-	s2 := &Server{Panel: panel, Panels: NewPanelStore(rec, rec.publishPanelRun)}
-	tr, err = s2.GetPanelTrackRecord(ctx, alice, &pb.GetPanelTrackRecordRequest{})
+	s2 := &Server{Panel: panel, Panels: NewPanelStore(rec)}
+	tr, err = s2.GetPanelTrackRecord(ctx, alice, &pb.GetPanelTrackRecordRequest{Tenant: acmeTid})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,15 +497,15 @@ func TestServerPanelRunDecisionAndTrackRecord(t *testing.T) {
 
 func TestServerPanelErrors(t *testing.T) {
 	rec := newFakeRecords()
-	s := &Server{Panels: NewPanelStore(rec, rec.publishPanelRun)}
-	if _, err := s.GeneratePanelAnswer(context.Background(), asUser("alice"), &pb.GeneratePanelAnswerRequest{Question: "q", Situation: "s"}); status.Code(err) != codes.FailedPrecondition {
+	s := &Server{Panels: NewPanelStore(rec)}
+	if _, err := s.GeneratePanelAnswer(acmeCtx(), asUser("alice"), &pb.GeneratePanelAnswerRequest{Tenant: acmeTid, Question: "q", Situation: "s"}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("no panel err = %v, want FailedPrecondition", err)
 	}
 	a := &fakePanelist{model: "a-1", phase1: proposals("x"), phase2: ranking(1, "", "x")}
 	panel, _ := newPanel(t, a)
 	panel.PrinciplesPaths = []string{"missing/"}
 	s.Panel = panel
-	if _, err := s.GeneratePanelAnswer(context.Background(), asUser("alice"), &pb.GeneratePanelAnswerRequest{Question: "q", Situation: "s"}); status.Code(err) != codes.FailedPrecondition {
+	if _, err := s.GeneratePanelAnswer(acmeCtx(), asUser("alice"), &pb.GeneratePanelAnswerRequest{Tenant: acmeTid, Question: "q", Situation: "s"}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("no principles err = %v, want FailedPrecondition", err)
 	}
 }
@@ -517,7 +517,7 @@ func TestServerConfigBuildsPanel(t *testing.T) {
 	rec := newFakeRecords()
 	var asked []string
 	s := &Server{
-		Records: rec, Publish: rec.publish, PublishSession: rec.publishSession, PublishPanelRun: rec.publishPanelRun,
+		Records:     rec,
 		NewProvider: func(string) Provider { return &scriptedProvider{} },
 		NewPanelist: func(alias string) Panelist { asked = append(asked, alias); return &fakePanelist{} },
 	}

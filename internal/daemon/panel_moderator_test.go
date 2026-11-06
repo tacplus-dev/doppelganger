@@ -131,7 +131,7 @@ func TestPanelSeatsGetByteIdenticalInputs(t *testing.T) {
 	openai := &fakePanelist{model: "gpt-5.2", phase1: proposals("Build it on gRPC"), phase2: ranking(70, "", "Build it on gRPC")}
 	gemini := &fakePanelist{model: "gemini-3-pro", phase1: proposals("Raw TCP framing"), phase2: ranking(60, "", "TCP")}
 	p := newModeratedPanel(t, mod, claude, openai, gemini)
-	run, err := p.Run(context.Background(), acme, grpcQuestion)
+	run, err := p.Run(acmeCtx(), acme, grpcQuestion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestModeratorSeesNoPrinciplesNorProposers(t *testing.T) {
 	mod := &fakeModerator{model: "m-1", frame: jsonReply(grpcFraming), merge: mergeAll("Build it on gRPC"), summary: quoteEverything}
 	a := &fakePanelist{model: "a-1", phase1: proposals("Build it on gRPC"), phase2: ranking(80, "", "Build it on gRPC")}
 	p := newModeratedPanel(t, mod, a)
-	if _, err := p.Run(context.Background(), acme, grpcQuestion); err != nil {
+	if _, err := p.Run(acmeCtx(), acme, grpcQuestion); err != nil {
 		t.Fatal(err)
 	}
 	if len(mod.reqs) != 3 {
@@ -235,7 +235,7 @@ func TestModeratorMergeIsCheckedByCode(t *testing.T) {
 	a := &fakePanelist{model: "a-1", phase1: proposals("Build it on gRPC", "Custom TCP framing"), phase2: ranking(80, "", "gRPC")}
 	b := &fakePanelist{model: "b-1", phase1: proposals("gRPC stream with rotation"), phase2: ranking(70, "", "gRPC")}
 	p := newModeratedPanel(t, mod, a, b)
-	run, err := p.Run(context.Background(), acme, grpcQuestion)
+	run, err := p.Run(acmeCtx(), acme, grpcQuestion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,13 +291,13 @@ func TestModeratorFailureFallsBackToCode(t *testing.T) {
 		}
 	}
 	plain, _ := newPanel(t, seats()...)
-	want, err := plain.Run(context.Background(), acme, grpcQuestion)
+	want, err := plain.Run(acmeCtx(), acme, grpcQuestion)
 	if err != nil {
 		t.Fatal(err)
 	}
 	mod := &fakeModerator{model: "m-1"}
 	p := newModeratedPanel(t, mod, seats()...)
-	run, err := p.Run(context.Background(), acme, grpcQuestion)
+	run, err := p.Run(acmeCtx(), acme, grpcQuestion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestModeratorSummaryMustQuoteEveryDissent(t *testing.T) {
 		}
 		return quoteEverything(req)
 	}}
-	run, err := newModeratedPanel(t, mod, a(), b()).Run(context.Background(), acme, grpcQuestion)
+	run, err := newModeratedPanel(t, mod, a(), b()).Run(acmeCtx(), acme, grpcQuestion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestModeratorSummaryMustQuoteEveryDissent(t *testing.T) {
 
 	// Smoothed over every time: no summary, a failure, the tally untouched.
 	mod = &fakeModerator{model: "m-1", frame: jsonReply(grpcFraming), merge: mergeAll("Build it on gRPC", "Custom TCP framing"), summary: smoothed}
-	run, err = newModeratedPanel(t, mod, a(), b()).Run(context.Background(), acme, grpcQuestion)
+	run, err = newModeratedPanel(t, mod, a(), b()).Run(acmeCtx(), acme, grpcQuestion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +448,7 @@ func TestLlmProxyPanelRequestsDifferOnlyInAlias(t *testing.T) {
 	req := Request{System: panelPhase1Prompt, Turn: renderPanelPhase1(panelFramingOf(grpcQuestion)), Schema: panelOptionsSchema}
 	aliases := []string{"claude-opus-latest", "openai-latest", "gemini-latest"}
 	for _, alias := range aliases {
-		raw, model, err := (&LlmProxy{Client: client, ModelAlias: alias}).CompleteWithModel(context.Background(), req)
+		raw, model, err := (&LlmProxy{Client: client, ModelAlias: alias}).CompleteWithModel(acmeCtx(), req)
 		if err != nil || string(raw) != `{"options":[]}` || model != "gpt-5.2" {
 			t.Fatalf("%s: %s %q %v", alias, raw, model, err)
 		}
@@ -481,7 +481,7 @@ func TestServerConfigBuildsModerator(t *testing.T) {
 	rec := newFakeRecords()
 	var built []Panelist
 	s := &Server{
-		Records: rec, Publish: rec.publish, PublishSession: rec.publishSession, PublishPanelRun: rec.publishPanelRun,
+		Records:     rec,
 		NewProvider: func(string) Provider { return &scriptedProvider{} },
 		NewPanelist: func(alias string) Panelist { f := &fakePanelist{model: alias}; built = append(built, f); return f },
 	}

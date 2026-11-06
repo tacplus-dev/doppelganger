@@ -10,11 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"sync"
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/proto"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/tacplus-dev/doppelganger/tacplus/types/services/doppelganger"
 	query_pb "github.com/tacplus-dev/doppelganger/tacplus/types/vservices/query"
@@ -44,37 +44,25 @@ var ErrSessionNotFound = errors.New("session not found")
 
 var sessionIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
-// sessionRecords is the generated record query plane's S2S half over Session.
+// sessionRecords is the generated record plane's S2S half over Session:
+// stratum's write surface and its point read.
 type sessionRecords interface {
-	// The plane's direct read: filter in, rows out, no result set.
-	GetSessionRows(ctx context.Context, req *query_pb.GetSessionRowsRequest, opts ...grpc.CallOption) (*query_pb.GetSessionRowsResponse, error)
+	GetSession(ctx context.Context, req *query_pb.GetSessionRequest, opts ...grpc.CallOption) (*query_pb.GetSessionResponse, error)
+	InsertIfAbsentSession(ctx context.Context, req *query_pb.InsertIfAbsentSessionRequest, opts ...grpc.CallOption) (*query_pb.RecordWriteResult, error)
+	ReplaceIfUnchangedSession(ctx context.Context, req *query_pb.ReplaceIfUnchangedSessionRequest, opts ...grpc.CallOption) (*query_pb.RecordWriteResult, error)
 }
 
-// recentTTL bounds the write-through cache below: a session this instance
-// published is served from memory this long, which covers the moment between
-// publishing a row and stratum having stored it (a caller opens a session and
-// asks in the next call). After that the store is the only truth.
-const recentTTL = 10 * time.Minute
-
-type recentSession struct {
-	sess    *pb.Session
-	expires time.Time
-}
-
-// SessionStore keeps sessions as Session records in stratum: every change
-// republishes the whole session; reads are a point query on the key, after
-// the write-through cache of this instance's own recent publishes.
+// SessionStore keeps sessions as Session records in stratum: a new session is
+// inserted, every change rewrites the whole session on the revision it read
+// (read again and redone when another write got there first), and a read is
+// Get on the key.
 type SessionStore struct {
 	records sessionRecords
-	publish func(context.Context, *pb.Session) error
 	now     func() time.Time
-
-	mu     sync.Mutex
-	recent map[string]recentSession
 }
 
-func NewSessionStore(records sessionRecords, publish func(context.Context, *pb.Session) error) *SessionStore {
-	return &SessionStore{records: records, publish: publish, now: time.Now, recent: map[string]recentSession{}}
+func NewSessionStore(records sessionRecords) *SessionStore {
+	return &SessionStore{records: records, now: time.Now}
 }
 
 func (s *SessionStore) Create(ctx context.Context, owner, tenant string, context_ []string) (*Session, error) {
@@ -90,90 +78,96 @@ func (s *SessionStore) Create(ctx context.Context, owner, tenant string, context
 		Context:   append([]string{}, context_...),
 		Turns:     []Turn{},
 	}
-	return sess, s.write(ctx, sess)
+	_, err := s.records.InsertIfAbsentSession(ctx, &query_pb.InsertIfAbsentSessionRequest{
+		Item:         s.record(ctx, sess),
+		TargetTenant: targetTenant(ctx),
+		TraceId:      traceID(ctx),
+	})
+	if err != nil {
+		// ALREADY_EXISTS here is a 128-bit random id drawn twice: not retried.
+		return nil, fmt.Errorf("inserting session %s: %w", sess.ID, err)
+	}
+	return sess, nil
 }
 
 // Get returns owner's session id. Another user's session is not found: its
 // existence is theirs to know.
 func (s *SessionStore) Get(ctx context.Context, id, owner string) (*Session, error) {
-	rec, err := s.read(ctx, id)
+	rec, _, err := s.read(ctx, id, owner)
 	if err != nil {
 		return nil, err
-	}
-	if rec.GetOwner() != owner {
-		return nil, ErrSessionNotFound
 	}
 	return fromRecord(rec), nil
 }
 
 func (s *SessionStore) AppendContext(ctx context.Context, id, owner string, context_ []string) error {
-	sess, err := s.Get(ctx, id, owner)
-	if err != nil {
-		return err
-	}
-	sess.Context = append(sess.Context, context_...)
-	return s.write(ctx, sess)
+	return s.update(ctx, id, owner, func(sess *Session) { sess.Context = append(sess.Context, context_...) })
 }
 
 func (s *SessionStore) AppendTurn(ctx context.Context, id, owner string, turn Turn) error {
-	sess, err := s.Get(ctx, id, owner)
-	if err != nil {
-		return err
-	}
-	sess.Turns = append(sess.Turns, turn)
-	return s.write(ctx, sess)
+	return s.update(ctx, id, owner, func(sess *Session) { sess.Turns = append(sess.Turns, turn) })
 }
 
-// write publishes the whole session and remembers it for recentTTL.
-func (s *SessionStore) write(ctx context.Context, sess *Session) error {
-	rec := toRecord(sess, s.now().UnixMilli())
-	rec.TraceId = traceID(ctx)
-	if err := s.publish(ctx, rec); err != nil {
-		return fmt.Errorf("publishing session %s: %w", sess.ID, err)
-	}
-	s.mu.Lock()
-	s.recent[sess.ID] = recentSession{sess: rec, expires: s.now().Add(recentTTL)}
-	s.mu.Unlock()
-	return nil
-}
-
-// read is this instance's recent publish of id if it has one, else the
-// store's row: a point query on the key, paged (one row), and closed.
-func (s *SessionStore) read(ctx context.Context, id string) (*pb.Session, error) {
-	if !sessionIDPattern.MatchString(id) {
-		return nil, ErrSessionNotFound
-	}
-	s.mu.Lock()
-	now := s.now()
-	for k, r := range s.recent {
-		if !now.Before(r.expires) {
-			delete(s.recent, k)
+// update applies change to owner's session id and rewrites it if the row is
+// still the revision it read; a concurrent write (ABORTED) is read and redone,
+// up to maxWriteAttempts.
+func (s *SessionStore) update(ctx context.Context, id, owner string, change func(*Session)) error {
+	for attempt := 1; ; attempt++ {
+		rec, revision, err := s.read(ctx, id, owner)
+		if err != nil {
+			return err
+		}
+		sess := fromRecord(rec)
+		change(sess)
+		_, err = s.records.ReplaceIfUnchangedSession(ctx, &query_pb.ReplaceIfUnchangedSessionRequest{
+			Item:         s.record(ctx, sess),
+			Expected:     &query_pb.ReplaceIfUnchangedSessionRequest_ExpectedRevision{ExpectedRevision: revision},
+			TargetTenant: targetTenant(ctx),
+			TraceId:      traceID(ctx),
+		})
+		switch {
+		case err == nil:
+			return nil
+		case status.Code(err) == codes.Aborted && attempt < maxWriteAttempts:
+			continue
+		case status.Code(err) == codes.NotFound:
+			return ErrSessionNotFound
+		default:
+			return fmt.Errorf("writing session %s: %w", id, err)
 		}
 	}
-	if r, ok := s.recent[id]; ok {
-		s.mu.Unlock()
-		return proto.Clone(r.sess).(*pb.Session), nil
-	}
-	s.mu.Unlock()
+}
 
-	// Limit 2, not 1: the key is unique, so a second row means the read cannot
-	// be trusted, and asking for one row could not tell the difference.
-	resp, err := s.records.GetSessionRows(ctx, &query_pb.GetSessionRowsRequest{
-		Filter:  &query_pb.SessionFilter{SessionId: &id},
-		Limit:   2,
-		TraceId: traceID(ctx),
+// record is sess as its row, stamped now and with the trace_id of the
+// request writing it.
+func (s *SessionStore) record(ctx context.Context, sess *Session) *pb.Session {
+	rec := toRecord(sess, s.now().UnixMilli())
+	rec.TraceId = traceID(ctx)
+	return rec
+}
+
+// read is owner's session id and the revision it is at; a malformed id, a
+// row that is not there or another user's is ErrSessionNotFound.
+func (s *SessionStore) read(ctx context.Context, id, owner string) (*pb.Session, int64, error) {
+	if !sessionIDPattern.MatchString(id) {
+		return nil, 0, ErrSessionNotFound
+	}
+	resp, err := s.records.GetSession(ctx, &query_pb.GetSessionRequest{
+		SessionId:    id,
+		TargetTenant: targetTenant(ctx),
+		TraceId:      traceID(ctx),
 	})
+	if status.Code(err) == codes.NotFound {
+		return nil, 0, ErrSessionNotFound
+	}
 	if err != nil {
-		return nil, fmt.Errorf("reading Session row: %w", err)
+		return nil, 0, fmt.Errorf("reading session %s: %w", id, err)
 	}
-	switch len(resp.GetItems()) {
-	case 0:
-		return nil, ErrSessionNotFound
-	case 1:
-		return resp.GetItems()[0], nil
-	default:
-		return nil, fmt.Errorf("session key %s matched more than one row", id)
+	rec := resp.GetItem()
+	if rec == nil || rec.GetDeleted() || rec.GetOwner() != owner {
+		return nil, 0, ErrSessionNotFound
 	}
+	return rec, resp.GetRevision(), nil
 }
 
 func toRecord(sess *Session, nowMs int64) *pb.Session {

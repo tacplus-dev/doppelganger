@@ -24,7 +24,7 @@ const acmeTid = "acme0001"
 // authenticates as jody of acme.
 func routedInstance(t *testing.T, s *Server) (*fe.Doppelganger, grpcserver.Authorizer) {
 	t.Helper()
-	auth, err := grpcserver.NewAuthorizer(context.Background(), nil)
+	auth, err := grpcserver.NewAuthorizer(acmeCtx(), nil)
 	if err != nil {
 		t.Fatalf("NewAuthorizer: %v", err)
 	}
@@ -41,9 +41,9 @@ func routedInstance(t *testing.T, s *Server) (*fe.Doppelganger, grpcserver.Autho
 // another tenant's tid is refused before the handler, so nothing is stored.
 func TestRouteFieldReachesNamedTenant(t *testing.T) {
 	rec := newFakeRecords()
-	store := NewSessionStore(rec, rec.publishSession)
+	store := NewSessionStore(rec)
 	w, _ := routedInstance(t, &Server{Sessions: store})
-	ctx := context.Background()
+	ctx := acmeCtx()
 
 	created, err := w.CreateSession(ctx, &pb.CreateSessionRequest{Tenant: acmeTid, Context: []string{"audience: Jody"}})
 	if err != nil {

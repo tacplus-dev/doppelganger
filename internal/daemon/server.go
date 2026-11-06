@@ -21,17 +21,13 @@ import (
 // authenticated user the gateway admitted, not used yet (every RPC is
 // RPC_FLAG_AUTH_ANY_USER).
 type Server struct {
-	// Records is the record query plane (stratum) over ContextDocument,
-	// Session and PanelRun; Publish, PublishSession and PublishPanelRun are
-	// their write paths (the generated topic publishers). main wires all four.
+	// Records is the record plane stratum serves over ContextDocument,
+	// Session and PanelRun: its write surface and its reads. main wires it.
 	Records interface {
 		contextRecords
 		sessionRecords
 		panelRecords
 	}
-	Publish         func(context.Context, *pb.ContextDocument) error
-	PublishSession  func(context.Context, *pb.Session) error
-	PublishPanelRun func(context.Context, *pb.PanelRun) error
 	// NewProvider builds the model provider for a model alias, and NewPanelist
 	// a panel seat's; main wires the llmproxy client into both, tests set
 	// Engine and Panel directly.
@@ -62,18 +58,18 @@ func (s *Server) DoppelgangerConfig(cfg *pb.Config) error {
 	if len(cfg.GetPanelModelAliases()) > 0 && s.NewPanelist == nil {
 		return errors.New("doppelganger: panel_model_aliases set but no panelist constructor wired")
 	}
-	if s.Records == nil || s.Publish == nil || s.PublishSession == nil || s.PublishPanelRun == nil {
+	if s.Records == nil {
 		return errors.New("doppelganger: no record plane wired")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Sessions == nil {
-		s.Sessions = NewSessionStore(s.Records, s.PublishSession)
+		s.Sessions = NewSessionStore(s.Records)
 	}
 	if s.Panels == nil {
-		s.Panels = NewPanelStore(s.Records, s.PublishPanelRun)
+		s.Panels = NewPanelStore(s.Records)
 	}
-	contexts := NewContextStore(s.Records, s.Publish)
+	contexts := NewContextStore(s.Records)
 	s.Engine = &Engine{Contexts: contexts, Provider: s.NewProvider(cfg.GetModelAlias())}
 	s.Panel = nil
 	if aliases := cfg.GetPanelModelAliases(); len(aliases) > 0 {
@@ -161,6 +157,7 @@ func callerIdentity(caller *servicemanager.Caller) (user, tenant string, err err
 
 func (s *Server) CreateSession(ctx context.Context, caller *servicemanager.Caller, req *pb.CreateSessionRequest) (*pb.CreateSessionResponse, error) {
 	ctx = withTraceID(ctx, req.GetTraceId())
+	ctx = withTargetTenant(ctx, req.GetTenant())
 	user, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -168,13 +165,14 @@ func (s *Server) CreateSession(ctx context.Context, caller *servicemanager.Calle
 	sessions, _ := s.current()
 	sess, err := sessions.Create(ctx, user, tenant, req.GetContext())
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, storeError(err, codes.Internal)
 	}
 	return &pb.CreateSessionResponse{SessionId: sess.ID}, nil
 }
 
 func (s *Server) UpdateSession(ctx context.Context, caller *servicemanager.Caller, req *pb.UpdateSessionRequest) (*pb.UpdateSessionResponse, error) {
 	ctx = withTraceID(ctx, req.GetTraceId())
+	ctx = withTargetTenant(ctx, req.GetTenant())
 	user, _, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -189,6 +187,7 @@ func (s *Server) UpdateSession(ctx context.Context, caller *servicemanager.Calle
 // UpdateContext replaces the caller's own context; it can reach nobody else's.
 func (s *Server) UpdateContext(ctx context.Context, caller *servicemanager.Caller, req *pb.UpdateContextRequest) (*pb.UpdateContextResponse, error) {
 	ctx = withTraceID(ctx, req.GetTraceId())
+	ctx = withTargetTenant(ctx, req.GetTenant())
 	user, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -205,6 +204,7 @@ func (s *Server) UpdateContext(ctx context.Context, caller *servicemanager.Calle
 // the generated authorizer's decision (this RPC's grant); here it is only done.
 func (s *Server) UpdateTenantContext(ctx context.Context, caller *servicemanager.Caller, req *pb.UpdateTenantContextRequest) (*pb.UpdateTenantContextResponse, error) {
 	ctx = withTraceID(ctx, req.GetTraceId())
+	ctx = withTargetTenant(ctx, req.GetTenant())
 	_, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -218,14 +218,15 @@ func (s *Server) UpdateTenantContext(ctx context.Context, caller *servicemanager
 }
 
 func contextError(err error) error {
-	if errors.Is(err, errBadContextPath) {
+	if errors.Is(err, errBadContextPath) || errors.Is(err, errDuplicateContextPath) {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
-	return status.Error(codes.Unavailable, err.Error())
+	return storeError(err, codes.Unavailable)
 }
 
 func (s *Server) GenerateAnswer(ctx context.Context, caller *servicemanager.Caller, req *pb.GenerateAnswerRequest) (*pb.GenerateAnswerResponse, error) {
 	ctx = withTraceID(ctx, req.GetTraceId())
+	ctx = withTargetTenant(ctx, req.GetTenant())
 	user, _, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -240,7 +241,7 @@ func (s *Server) GenerateAnswer(ctx context.Context, caller *servicemanager.Call
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
 	if err := sessions.AppendTurn(ctx, sess.ID, user, Turn{Question: req.GetQuestion(), Answer: a}); err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, storeError(err, codes.Internal)
 	}
 	return answerToProto(a), nil
 }
@@ -249,7 +250,7 @@ func sessionError(err error) error {
 	if errors.Is(err, ErrSessionNotFound) {
 		return status.Error(codes.NotFound, err.Error())
 	}
-	return status.Error(codes.Unavailable, err.Error())
+	return storeError(err, codes.Unavailable)
 }
 
 // answerToProto and answerFromProto are the two halves of one mapping: the
@@ -284,6 +285,7 @@ func answerFromProto(r *pb.GenerateAnswerResponse) Answer {
 // context must change before it can answer.
 func (s *Server) GeneratePanelAnswer(ctx context.Context, caller *servicemanager.Caller, req *pb.GeneratePanelAnswerRequest) (*pb.GeneratePanelAnswerResponse, error) {
 	ctx = withTraceID(ctx, req.GetTraceId())
+	ctx = withTargetTenant(ctx, req.GetTenant())
 	user, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -307,7 +309,7 @@ func (s *Server) GeneratePanelAnswer(ctx context.Context, caller *servicemanager
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
 	if err := runs.Create(ctx, user, tenant, run); err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, storeError(err, codes.Internal)
 	}
 	return &pb.GeneratePanelAnswerResponse{
 		PanelId:  run.GetPanelId(),
@@ -328,6 +330,7 @@ func (s *Server) GeneratePanelAnswer(ctx context.Context, caller *servicemanager
 // may call it is the generated authorizer's decision (this RPC's grant).
 func (s *Server) UpdatePanelDecision(ctx context.Context, caller *servicemanager.Caller, req *pb.UpdatePanelDecisionRequest) (*pb.UpdatePanelDecisionResponse, error) {
 	ctx = withTraceID(ctx, req.GetTraceId())
+	ctx = withTargetTenant(ctx, req.GetTenant())
 	_, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -339,7 +342,7 @@ func (s *Server) UpdatePanelDecision(ctx context.Context, caller *servicemanager
 	case errors.Is(err, errUnknownOption):
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	case err != nil:
-		return nil, status.Error(codes.Unavailable, err.Error())
+		return nil, storeError(err, codes.Unavailable)
 	}
 	return &pb.UpdatePanelDecisionResponse{}, nil
 }
@@ -347,6 +350,7 @@ func (s *Server) UpdatePanelDecision(ctx context.Context, caller *servicemanager
 // GetPanelTrackRecord scores the tenant's decided runs per model and question kind.
 func (s *Server) GetPanelTrackRecord(ctx context.Context, caller *servicemanager.Caller, req *pb.GetPanelTrackRecordRequest) (*pb.GetPanelTrackRecordResponse, error) {
 	ctx = withTraceID(ctx, req.GetTraceId())
+	ctx = withTargetTenant(ctx, req.GetTenant())
 	_, tenant, err := callerIdentity(caller)
 	if err != nil {
 		return nil, err
@@ -354,7 +358,7 @@ func (s *Server) GetPanelTrackRecord(ctx context.Context, caller *servicemanager
 	_, runs := s.currentPanel()
 	all, err := runs.List(ctx, tenant)
 	if err != nil {
-		return nil, status.Error(codes.Unavailable, err.Error())
+		return nil, storeError(err, codes.Unavailable)
 	}
 	return panelTrackRecord(all), nil
 }

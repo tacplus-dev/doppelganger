@@ -55,8 +55,8 @@ func TestEngineRetriesFabricatedQuote(t *testing.T) {
 	rec.seed(acme, scopeTenant, acme, "life.md", quoteRepo)
 	misquote := answerWith("QUOTED", `He said "Leave education off outward material, and never claim a degree."`)
 	p := &scriptedProvider{replies: []any{misquote, answerWith("DERIVED", "Omit education.")}}
-	e := &Engine{Contexts: NewContextStore(rec, rec.publish), Provider: p}
-	a, err := e.Answer(t.Context(), &Session{Tenant: acme}, "education?")
+	e := &Engine{Contexts: NewContextStore(rec), Provider: p}
+	a, err := e.Answer(withTargetTenant(t.Context(), acmeTid), &Session{Tenant: acme}, "education?")
 	if err != nil || a.Answer != "Omit education." {
 		t.Fatalf("answer = %q, err = %v", a.Answer, err)
 	}
@@ -69,8 +69,8 @@ func TestEnginePersistentFabricationIsStripped(t *testing.T) {
 	rec.seed(acme, scopeTenant, acme, "life.md", quoteRepo)
 	misquote := answerWith("QUOTED", `He said "Leave education off outward material, and never claim a degree." and "better to just keep it SE."`)
 	p := &scriptedProvider{replies: []any{misquote, misquote, misquote}}
-	e := &Engine{Contexts: NewContextStore(rec, rec.publish), Provider: p}
-	a, err := e.Answer(t.Context(), &Session{Tenant: acme}, "education?")
+	e := &Engine{Contexts: NewContextStore(rec), Provider: p}
+	a, err := e.Answer(withTargetTenant(t.Context(), acmeTid), &Session{Tenant: acme}, "education?")
 	if err != nil {
 		t.Fatal(err)
 	}

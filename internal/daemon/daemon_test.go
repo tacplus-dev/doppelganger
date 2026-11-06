@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -25,9 +24,9 @@ func asUser(principal string) *servicemanager.Caller {
 }
 
 func TestSessionStoreRoundTrip(t *testing.T) {
-	ctx := context.Background()
+	ctx := acmeCtx()
 	rec := newFakeRecords()
-	store := NewSessionStore(rec, rec.publishSession)
+	store := NewSessionStore(rec)
 	sess, err := store.Create(ctx, "u1", acme, []string{"audience: Jody"})
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +57,7 @@ func TestSessionStoreRoundTrip(t *testing.T) {
 	// The session is a row in the store, not this instance's memory: a second
 	// store over the same records (another pod, or this one after a restart)
 	// reads it whole, turns and all.
-	again := NewSessionStore(rec, rec.publishSession)
+	again := NewSessionStore(rec)
 	fresh, err := again.Get(ctx, sess.ID, "u1")
 	if err != nil || len(fresh.Turns) != 1 || fresh.Turns[0].Answer.Answer != "a1" {
 		t.Fatalf("session not in the store: %+v %v", fresh, err)
@@ -66,9 +65,9 @@ func TestSessionStoreRoundTrip(t *testing.T) {
 }
 
 func TestSessionStoreRejectsUnknownAndMalformedIDs(t *testing.T) {
-	ctx := context.Background()
+	ctx := acmeCtx()
 	rec := newFakeRecords()
-	store := NewSessionStore(rec, rec.publishSession)
+	store := NewSessionStore(rec)
 	for _, id := range []string{"0123456789abcdef0123456789abcdef", "../../etc/passwd", ""} {
 		if _, err := store.Get(ctx, id, "u1"); !errors.Is(err, ErrSessionNotFound) {
 			t.Errorf("Get(%q) err = %v, want ErrSessionNotFound", id, err)
@@ -94,9 +93,9 @@ func TestRenderTurnReplaysEarlierTurns(t *testing.T) {
 // their scope; a user sees no other user's files, and a replacement retires
 // the rows it no longer carries.
 func TestContextStoreReplaceAndLoad(t *testing.T) {
-	ctx := context.Background()
+	ctx := acmeCtx()
 	rec := newFakeRecords()
-	c := NewContextStore(rec, rec.publish)
+	c := NewContextStore(rec)
 	if _, _, err := c.Replace(ctx, acme, scopeTenant, acme, []*pb.ContextFile{{Path: "../escape.md", Content: []byte("x")}}); !errors.Is(err, errBadContextPath) {
 		t.Fatalf("parent path err = %v, want errBadContextPath", err)
 	}
@@ -140,15 +139,17 @@ func TestContextStoreReplaceAndLoad(t *testing.T) {
 	if strings.Contains(got, "tenant tone") || !strings.Contains(got, "new tone") {
 		t.Fatalf("Replace must replace whole: %q", got)
 	}
-	// A replacement is readable at once, before stratum has the rows: a store
-	// whose publish lands nowhere still answers Load from the instance's own
-	// recent replacement, and a second instance (no cache) sees the store.
-	lagging := NewContextStore(newFakeRecords(), func(context.Context, *pb.ContextDocument) error { return nil })
-	if _, _, err := lagging.Replace(ctx, acme, scopeUser, "carol", []*pb.ContextFile{{Path: "me.md", Content: []byte("carol is quick")}}); err != nil {
+	// A replacement is the store's once Replace returns: another instance,
+	// with nothing of its own, reads it at once.
+	if _, _, err := c.Replace(ctx, acme, scopeUser, "carol", []*pb.ContextFile{{Path: "me.md", Content: []byte("carol is quick")}}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := lagging.Load(ctx, acme, "carol"); err != nil || !strings.Contains(got, "carol is quick") {
+	if got, err := NewContextStore(rec).Load(ctx, acme, "carol"); err != nil || !strings.Contains(got, "carol is quick") {
 		t.Fatalf("Load right after Replace = %q, %v; want the just-pushed context", got, err)
+	}
+	// A path given twice is refused, not written.
+	if _, _, err := c.Replace(ctx, acme, scopeUser, "carol", []*pb.ContextFile{{Path: "a.md"}, {Path: "a.md"}}); !errors.Is(err, errDuplicateContextPath) {
+		t.Fatalf("duplicate path err = %v, want errDuplicateContextPath", err)
 	}
 	// Nothing anywhere is a refusal, not an empty prompt.
 	if _, err := c.Load(ctx, acme, "nobody"); err == nil || !strings.Contains(err.Error(), "the tenant has none") {
@@ -167,31 +168,31 @@ func TestContextStoreReplaceAndLoad(t *testing.T) {
 func TestServerRoundTrip(t *testing.T) {
 	p := &scriptedProvider{replies: []any{json.RawMessage(`{"kind":"ANSWER","answer":"fix now, note the rewrite","reasoning":"r","would_change_mind":"w","provenance":"DERIVED","sources":["README.md"],"missing":[]}`)}}
 	rec := newFakeRecords()
-	store := NewSessionStore(rec, rec.publishSession)
-	s := &Server{Sessions: store, Engine: &Engine{Contexts: NewContextStore(rec, rec.publish), Provider: p}}
-	ctx := context.Background()
+	store := NewSessionStore(rec)
+	s := &Server{Sessions: store, Engine: &Engine{Contexts: NewContextStore(rec), Provider: p}}
+	ctx := acmeCtx()
 	jody := asUser("jody")
 
 	// No caller is a refusal on every RPC.
-	if _, err := s.CreateSession(ctx, nil, &pb.CreateSessionRequest{}); status.Code(err) != codes.Unauthenticated {
+	if _, err := s.CreateSession(ctx, nil, &pb.CreateSessionRequest{Tenant: acmeTid}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("no caller err = %v, want Unauthenticated", err)
 	}
 	// The user's own context arrives through the service and lands in the store.
-	if _, err := s.UpdateContext(ctx, jody, &pb.UpdateContextRequest{Files: []*pb.ContextFile{{Path: "README.md", Content: []byte("Jody wants recommendations.")}}}); err != nil {
+	if _, err := s.UpdateContext(ctx, jody, &pb.UpdateContextRequest{Tenant: acmeTid, Files: []*pb.ContextFile{{Path: "README.md", Content: []byte("Jody wants recommendations.")}}}); err != nil {
 		t.Fatal(err)
 	}
-	created, err := s.CreateSession(ctx, jody, &pb.CreateSessionRequest{Context: []string{"audience: Jody"}})
+	created, err := s.CreateSession(ctx, jody, &pb.CreateSessionRequest{Tenant: acmeTid, Context: []string{"audience: Jody"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.UpdateSession(ctx, jody, &pb.UpdateSessionRequest{SessionId: created.GetSessionId(), Context: []string{"purpose: e2e"}}); err != nil {
+	if _, err := s.UpdateSession(ctx, jody, &pb.UpdateSessionRequest{Tenant: acmeTid, SessionId: created.GetSessionId(), Context: []string{"purpose: e2e"}}); err != nil {
 		t.Fatal(err)
 	}
 	// Another user of the tenant cannot touch Jody's session.
-	if _, err := s.GenerateAnswer(ctx, asUser("someone-else"), &pb.GenerateAnswerRequest{SessionId: created.GetSessionId(), Question: "q"}); status.Code(err) != codes.NotFound {
+	if _, err := s.GenerateAnswer(ctx, asUser("someone-else"), &pb.GenerateAnswerRequest{Tenant: acmeTid, SessionId: created.GetSessionId(), Question: "q"}); status.Code(err) != codes.NotFound {
 		t.Fatalf("another user's GenerateAnswer err = %v, want NotFound", err)
 	}
-	resp, err := s.GenerateAnswer(ctx, jody, &pb.GenerateAnswerRequest{SessionId: created.GetSessionId(), Question: "rewrite?"})
+	resp, err := s.GenerateAnswer(ctx, jody, &pb.GenerateAnswerRequest{Tenant: acmeTid, SessionId: created.GetSessionId(), Question: "rewrite?"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +215,7 @@ func TestServerRoundTrip(t *testing.T) {
 	if live := rec.live(acme, scopeUser, "jody"); live["README.md"] != "Jody wants recommendations." {
 		t.Fatalf("user context not in the store: %v", live)
 	}
-	_, err = s.GenerateAnswer(ctx, jody, &pb.GenerateAnswerRequest{SessionId: "0123456789abcdef0123456789abcdef", Question: "q"})
+	_, err = s.GenerateAnswer(ctx, jody, &pb.GenerateAnswerRequest{Tenant: acmeTid, SessionId: "0123456789abcdef0123456789abcdef", Question: "q"})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown session err = %v, want NotFound", err)
 	}

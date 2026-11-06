@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -26,64 +25,58 @@ const (
 	scopeUser   = "user"
 )
 
-// contextRecords is the generated record query plane's S2S half over
+// contextRecords is the generated record plane's S2S half over
 // ContextDocument, as RecordMapClient implements it; stratum serves it.
 type contextRecords interface {
 	// The plane's direct read: filter in, rows out, no result set, so nothing
 	// a connection failover between two calls could lose.
 	GetContextDocumentRows(ctx context.Context, req *query_pb.GetContextDocumentRowsRequest, opts ...grpc.CallOption) (*query_pb.GetContextDocumentRowsResponse, error)
+	// The write surface's atomic batch.
+	Apply(ctx context.Context, req *query_pb.RecordApplyRequest, opts ...grpc.CallOption) (*query_pb.RecordApplyResponse, error)
 }
 
 // ContextStore is the context this instance answers from, as ContextDocument
 // records in stratum: the tenant's shared context (scope "tenant") and each
-// user's own (scope "user"). Writing is publishing the record (stratum stores
-// it on its subscription); reading is the record query plane. Nothing is kept
-// on the instance's disk, so nothing is lost with it.
+// user's own (scope "user"). Writing is Apply on stratum's write surface;
+// reading is the record plane's direct read. Nothing is kept on the
+// instance's disk, so nothing is lost with it.
 type ContextStore struct {
 	records contextRecords
-	publish func(context.Context, *pb.ContextDocument) error
 	now     func() time.Time
-
-	// recent is the write-through cache of this instance's own replacements,
-	// keyed by context, for recentTTL: a caller who pushes and asks in the
-	// next call must not read the store before stratum has the rows.
-	mu     sync.Mutex
-	recent map[string]recentContext
 }
 
-type recentContext struct {
-	docs    []*pb.ContextDocument
-	expires time.Time
+func NewContextStore(records contextRecords) *ContextStore {
+	return &ContextStore{records: records, now: time.Now}
 }
 
-func NewContextStore(records contextRecords, publish func(context.Context, *pb.ContextDocument) error) *ContextStore {
-	return &ContextStore{records: records, publish: publish, now: time.Now, recent: map[string]recentContext{}}
-}
+var (
+	errBadContextPath       = errors.New("context file path must be relative, clean and inside the context")
+	errDuplicateContextPath = errors.New("context file path given twice")
+)
 
-func contextKey(tenant, scope, owner string) string { return tenant + "\x00" + scope + "\x00" + owner }
-
-var errBadContextPath = errors.New("context file path must be relative, clean and inside the context")
-
-// Replace makes files the whole content of one context: every file is
-// published onto its own row (the same path lands on the same row), and the
-// rows the context no longer has are published deleted.
+// Replace makes files the whole content of one context: every file is put
+// onto its own row (the same path lands on the same row), and the rows the
+// context no longer has are put deleted.
 func (c *ContextStore) Replace(ctx context.Context, tenant, scope, owner string, files []*pb.ContextFile) (int, int64, error) {
+	seen := map[string]bool{}
 	for _, f := range files {
 		if !validContextPath(f.GetPath()) {
 			return 0, 0, fmt.Errorf("%w: %q", errBadContextPath, f.GetPath())
 		}
+		if seen[f.GetPath()] {
+			return 0, 0, fmt.Errorf("%w: %q", errDuplicateContextPath, f.GetPath())
+		}
+		seen[f.GetPath()] = true
 	}
 	existing, err := c.list(ctx, tenant, scope, owner)
 	if err != nil {
 		return 0, 0, err
 	}
-	kept := map[string]bool{}
 	now := c.now().UnixMilli()
 	var bytes int64
-	var published []*pb.ContextDocument
+	var docs []*pb.ContextDocument
 	for _, f := range files {
-		kept[f.GetPath()] = true
-		doc := &pb.ContextDocument{
+		docs = append(docs, &pb.ContextDocument{
 			DocumentId:      documentID(tenant, scope, owner, f.GetPath()),
 			TenantNamespace: tenant,
 			Scope:           scope,
@@ -92,21 +85,14 @@ func (c *ContextStore) Replace(ctx context.Context, tenant, scope, owner string,
 			Content:         f.GetContent(),
 			UpdatedAtMs:     now,
 			TraceId:         traceID(ctx),
-		}
-		if err := c.publish(ctx, doc); err != nil {
-			return 0, 0, fmt.Errorf("publishing context document %q: %w", f.GetPath(), err)
-		}
-		published = append(published, doc)
+		})
 		bytes += int64(len(f.GetContent()))
 	}
-	c.mu.Lock()
-	c.recent[contextKey(tenant, scope, owner)] = recentContext{docs: published, expires: c.now().Add(recentTTL)}
-	c.mu.Unlock()
 	for _, old := range existing {
-		if kept[old.GetPath()] {
+		if seen[old.GetPath()] {
 			continue
 		}
-		gone := &pb.ContextDocument{
+		docs = append(docs, &pb.ContextDocument{
 			DocumentId:      old.GetDocumentId(),
 			TenantNamespace: tenant,
 			Scope:           scope,
@@ -115,13 +101,53 @@ func (c *ContextStore) Replace(ctx context.Context, tenant, scope, owner string,
 			UpdatedAtMs:     now,
 			Deleted:         true,
 			TraceId:         traceID(ctx),
-		}
-		if err := c.publish(ctx, gone); err != nil {
-			return 0, 0, fmt.Errorf("retiring context document %q: %w", old.GetPath(), err)
-		}
+		})
+	}
+	if err := c.put(ctx, docs); err != nil {
+		return 0, 0, err
 	}
 	return len(files), bytes, nil
 }
+
+// put writes docs with Apply, in the canonical lock order Apply requires (one
+// record type, so by key). A context that fits one Apply (maxApplyOps rows,
+// maxApplyBytes of content) is replaced atomically; a larger one in batches,
+// each atomic, and a failure part way leaves a mix the caller's retry of the
+// same replacement (it is idempotent) completes.
+func (c *ContextStore) put(ctx context.Context, docs []*pb.ContextDocument) error {
+	sort.Slice(docs, func(i, j int) bool { return docs[i].GetDocumentId() < docs[j].GetDocumentId() })
+	for len(docs) > 0 {
+		n, size := 0, 0
+		for n < len(docs) && n < maxApplyOps && (n == 0 || size+len(docs[n].GetContent()) <= maxApplyBytes) {
+			size += len(docs[n].GetContent())
+			n++
+		}
+		req := &query_pb.RecordApplyRequest{TargetTenant: targetTenant(ctx), TraceId: traceID(ctx)}
+		for _, d := range docs[:n] {
+			req.Ops = append(req.Ops, &query_pb.RecordOp{
+				Op: &query_pb.RecordOp_PutContextDocument{PutContextDocument: &query_pb.PutContextDocumentRequest{
+					Item:         d,
+					TargetTenant: targetTenant(ctx),
+					TraceId:      traceID(ctx),
+				}},
+				TraceId: traceID(ctx),
+			})
+		}
+		if _, err := c.records.Apply(ctx, req); err != nil {
+			return fmt.Errorf("writing %d context documents: %w", n, err)
+		}
+		docs = docs[n:]
+	}
+	return nil
+}
+
+// maxApplyOps is the most ops one Apply takes (its generated bound), and
+// maxApplyBytes the most file content this service sends in one, well under
+// a gRPC message; a larger file goes alone.
+const (
+	maxApplyOps   = 256
+	maxApplyBytes = 2 << 20
+)
 
 // Load renders the tenant's context and the user's own, Markdown files only,
 // each tagged with its scope and path, in path order. No files in either is an
@@ -192,26 +218,14 @@ func underAny(path string, prefixes []string) bool {
 	return false
 }
 
-// list reads one context's live rows: this instance's recent replacement if
-// it made one, else a point query on (tenant, scope, owner), paged through,
-// and closed.
+// list reads one context's live rows: a point query on (tenant, scope,
+// owner) with the direct read.
 func (c *ContextStore) list(ctx context.Context, tenant, scope, owner string) ([]*pb.ContextDocument, error) {
-	c.mu.Lock()
-	now := c.now()
-	for k, r := range c.recent {
-		if !now.Before(r.expires) {
-			delete(c.recent, k)
-		}
-	}
-	if r, ok := c.recent[contextKey(tenant, scope, owner)]; ok {
-		c.mu.Unlock()
-		return r.docs, nil
-	}
-	c.mu.Unlock()
 	resp, err := c.records.GetContextDocumentRows(ctx, &query_pb.GetContextDocumentRowsRequest{
-		Filter:  &query_pb.ContextDocumentFilter{TenantNamespace: &tenant, Scope: &scope, Owner: &owner},
-		Limit:   maxContextDocuments,
-		TraceId: traceID(ctx),
+		Filter:       &query_pb.ContextDocumentFilter{TenantNamespace: &tenant, Scope: &scope, Owner: &owner},
+		Limit:        maxContextDocuments,
+		TargetTenant: targetTenant(ctx),
+		TraceId:      traceID(ctx),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reading ContextDocument rows: %w", err)

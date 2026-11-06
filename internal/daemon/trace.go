@@ -7,7 +7,7 @@ import "context"
 
 // traceKey carries the trace_id (tacplus field 200) of the request a handler
 // is serving to every downstream call that request causes: llmproxy, the
-// record query plane and the record publishes (tacplus USER.md, Distributed
+// record store's reads and writes (tacplus USER.md, Distributed
 // Tracing). Each handler sets it from its request; each call site reads it,
 // so the engine's retries, every panel seat and the moderator carry it too.
 type traceKey struct{}

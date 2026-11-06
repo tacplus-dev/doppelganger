@@ -18,9 +18,12 @@ to answer. Design and rules: `~/workspace/jody/agents.md`, "An agent that repres
   service manager at start and on change. Context is two layers of `ContextDocument` records in
   **stratum**, both written only through the service: the tenant's shared context
   (`UpdateTenantContext`, gated by that RPC's grant) and each user's own (`UpdateContext`, any
-  user, their own files). Writing is publishing the record onto its topic (stratum stores it);
-  reading is the generated record query plane. Answers rest on both; nothing is on the instance's
-  disk. Sessions (`state_dir`) are next to move.
+  user, their own files). Context, sessions and panel runs are written through stratum's
+  generated record write surface (`InsertIfAbsent`, `ReplaceIfUnchanged` on the revision read,
+  `Apply`), acked once the tenant's redo has them (`DURABILITY_LOCAL`), and read back with `Get`
+  and the record plane's rows; nothing is published on the event bus (stratum ingests nothing
+  from it, #7). While the redo is unreachable a write is refused `UNAVAILABLE` and nothing is
+  written. Answers rest on both layers; nothing is on the instance's disk.
 - Sessions belong to the user who opened them; another user of the tenant cannot read or
   extend one.
 - Sessions: a caller opens one with context (who they are, who the answer is for, what it is

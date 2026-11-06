@@ -54,11 +54,8 @@ func run() error {
 		NewPanelist: func(modelAlias string) daemon.Panelist {
 			return &daemon.LlmProxy{Client: s.Grpc().Clients().Services().LlmProxyClient(), ModelAlias: modelAlias}
 		},
-		// Context and sessions: read through the record query plane stratum
-		// hosts, written by publishing each record onto its topic.
-		Records:         s.Grpc().Clients().Vservices().RecordMapClient(),
-		Publish:         s.CreateDoppelgangerContextDocumentBusStreamPublisher(),
-		PublishSession:  s.CreateDoppelgangerSessionBusStreamPublisher(),
-		PublishPanelRun: s.CreateDoppelgangerPanelRunBusStreamPublisher(),
+		// Context, sessions and panel runs: written through stratum's record
+		// write surface and read back through its record plane.
+		Records: s.Grpc().Clients().Vservices().RecordMapClient(),
 	})
 }
