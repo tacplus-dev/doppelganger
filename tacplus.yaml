@@ -1,4 +1,4 @@
-tacplus: "2.5"
+tacplus: "2.6"
 kind: service
 language: go
 src: proto
@@ -7,7 +7,7 @@ depends:
   - llmproxy
   # The records are written to and read from stratum, through its record
   # write surface and reads; nothing is published on the event bus. eventbus
-  # stays because tacplus 2.5 still synthesizes each record's topic, whose
+  # stays because tacplus (2.5, and 2.6 still) synthesizes each record's topic, whose
   # broker must resolve.
   - eventbus
   - stratum
