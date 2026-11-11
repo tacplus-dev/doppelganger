@@ -12,3 +12,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-06 looper issue Write records to Stratum through its write surface: Stratum no longer ingests them from the event bus (#7, 89f440c)
 - 2026-11-06 looper issue Gates: justfile has no `gates` recipe, so `just gates` fails on main (#4)
 - 2026-11-06 looper issue Bump golang.org/x/net to v0.60.0+ (5 HTTP/2 CVEs, GO-2026-6603/6610/6611/6612/6617) (#3)
+- 2026-11-07 looper issue tacplus floor 2.5 is behind the latest released line (2.6): move the floor to 2.6 and commit tacplus.lock (#13)
