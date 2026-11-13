@@ -1,0 +1,400 @@
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/doppelganger/issues/2; for p in llmproxy deploymentproxy doppelganger; do t=$(curl -s "https://ghcr.io/token?scope=repository:tacplus-dev/$p:pull" | jq -r .token); echo "$p: $(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $t" https://ghcr.io/v2/tacplus-dev/$p/tag...
+< llmproxy: 200 {"name":"tacplus-dev/llmproxy","tags":["0.1.0","0.1","0.1.1","0.1.2","0.1.3","0.1.4","0.1.5","0.1.6"]} deploymentproxy: 200 {"name":"tacplus-dev/deploymentproxy","tags":["0.2.0","0.2","0.2.1","0.2.2"]} doppelganger: 404 {"errors":[{"code":"NAME_UNKNOWN","message":"repository name not k...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash for r in doppelganger llmproxy eventbus stratum launcher tacplus; do echo "$r $(gh api repos/tacplus-dev/$r -q .visibility)"; done; gh api repos/tacplus-dev/llmproxy/contents/README.md -H 'Accept: application/vnd.github.raw' | grep -n -i -A25 "^## .*releas" | head -50
+< doppelganger public llmproxy public eventbus public stratum public launcher public tacplus public 81:## Releasing 82- 83-llmproxy is released by version, and fleets pin a release line, `MAJOR.MINOR`, which is always that line's 84-highest patch ([tacplus#180](https://github.com/tacplus-dev/tacplus/i...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+Writing the test for the release scripts first, then the scripts and the workflow.
+> Bash cd /builds/looper/doppelganger/issues/2; cat scripts/trials.sh | head -15; cat README.md | head -60; grep -n "^#" README.md
+< #!/usr/bin/env bash # Live trials against the running daemon. Six questions that exercise the # answer rules; one session with a pushback turn. Prints one JSON line per # answer so the run can be diffed against the last one. # #   scripts/trials.sh            # uses the installed `doppelganger` CLI ...
+Test first:
+> Write /builds/looper/doppelganger/issues/2/scripts/release_test.sh
+< File created successfully at: /builds/looper/doppelganger/issues/2/scripts/release_test.sh (file state is current in your context — no need to Read it back)
+> Bash cd /builds/looper/doppelganger/issues/2; chmod +x scripts/release_test.sh; scripts/release_test.sh 2>&1 | tail -3
+< ok   not a version: refused (tags, v1.2) ok   not a version: refused (notes) release_test.sh: 14 failed
+= thinking_tokens
+= thinking_tokens
+Fails as expected. Now the scripts:
+> Write /builds/looper/doppelganger/issues/2/scripts/release-tags.sh
+< File created successfully at: /builds/looper/doppelganger/issues/2/scripts/release-tags.sh (file state is current in your context — no need to Read it back)
+> Write /builds/looper/doppelganger/issues/2/scripts/release-notes.sh
+< File created successfully at: /builds/looper/doppelganger/issues/2/scripts/release-notes.sh (file state is current in your context — no need to Read it back)
+> Bash cd /builds/looper/doppelganger/issues/2; chmod +x scripts/release-*.sh; scripts/release_test.sh 2>&1; command -v shellcheck
+< Exit code 1 ok   first release: version and line ok   first release: every commit ok   a patch moves its line ok   the older patch no longer moves the line ok   a patch's notes ok   a patch on an older line moves that line ok   and not the newer line ok   an older line's notes: since its own previou...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+Tag and notes scripts pass their test. Now the build and image scripts and the workflow.
+> Bash gh api repos/tacplus-dev/launcher/contents/go.mod -H 'Accept: application/vnd.github.raw' | head -5; gh api repos/tacplus-dev/launcher/git/trees/main -q '.tree[].path' | tr '\n' ' '
+< module github.com/tacplus-dev/launcher  go 1.27.0  toolchain go1.27.3 .github .gitignore HISTORY.md LICENSE PROPOSALS.md PROVENANCE.md README.md ROADMAP.md STATE.md build.lock gates.sh gates.yaml go.mod go.sum main.go release.sh tests
+= thinking_tokens
+= thinking_tokens
+> Write /builds/looper/doppelganger/issues/2/scripts/release-build.sh
+< File created successfully at: /builds/looper/doppelganger/issues/2/scripts/release-build.sh (file state is current in your context — no need to Read it back)
+> Write /builds/looper/doppelganger/issues/2/scripts/release-image.sh
+< File created successfully at: /builds/looper/doppelganger/issues/2/scripts/release-image.sh (file state is current in your context — no need to Read it back)
+= thinking_tokens
+= thinking_tokens
+> Write /builds/looper/doppelganger/issues/2/.github/workflows/release.yml
+< File created successfully at: /builds/looper/doppelganger/issues/2/.github/workflows/release.yml (file state is current in your context — no need to Read it back)
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+Fix: a git worktree's `.git` points back into `tools/.git`, which the build container won't see (Go stamps VCS info and would fail), so I'll use a local clone instead.
+> Edit /builds/looper/doppelganger/issues/2/.github/workflows/release.yml
+< The file /builds/looper/doppelganger/issues/2/.github/workflows/release.yml has been updated successfully. (file state is current in your context — no need to Read it back)
+> Bash cd /builds/looper/doppelganger/issues/2; command -v actionlint yamllint shellcheck python3; python3 -c "import yaml,sys; d=yaml.safe_load(open('.github/workflows/release.yml')); print(list(d[True].keys()), [s.get('name',s.get('uses')) for s in d['jobs']['release']['steps']])"; bash -n scripts/releas...
+< /opt/venv/bin/python3 Traceback (most recent call last):   File "<string>", line 1, in <module>     import yaml,sys; d=yaml.safe_load(open('.github/workflows/release.yml')); print(list(d[True].keys()), [s.get('name',s.get('uses')) for s in d['jobs']['release']['steps']])     ^^^^^^^^^^^^^^^ ModuleNo...
+= thinking_tokens
+= thinking_tokens
+> Bash command -v go && GOFLAGS= timeout 300 go install github.com/rhysd/actionlint/cmd/actionlint@latest 2>&1 | tail -3; ls ~/go/bin 2>/dev/null
+= task_started
+= task_notification
+< /usr/local/go/bin/go go: downloading golang.org/x/sys v0.42.0 go: downloading github.com/mattn/go-isatty v0.0.20 go: downloading github.com/clipperhouse/uax29/v2 v2.7.0 actionlint
+> Bash cd /builds/looper/doppelganger/issues/2; ~/go/bin/actionlint .github/workflows/*.yml && echo actionlint ok; GOFLAGS= timeout 300 go install mvdan.cc/sh/v3/cmd/shfmt@latest >/dev/null 2>&1; ls ~/go/bin
+< actionlint ok actionlint shfmt
+= thinking_tokens
+= thinking_tokens
+actionlint passes. Checking the plan step's logic against this repository's real tags:
+> Bash cd /builds/looper/doppelganger/issues/2; scripts/release-tags.sh v0.1.0; scripts/release-tags.sh --highest; scripts/release-notes.sh v0.1.0 | head -5; d=$(mktemp -d); git clone -q . $d/c && cd $d/c && git tag v0.1.1 && ~-/scripts/release-tags.sh v0.1.1 && ~-/scripts/release-tags.sh v0.1.0 && ~-/scri...
+< Exit code 1 0.1.0 0.1 v0.1.0 Changes:  - HISTORY.md: #3 (looper) (de5035a) - Move the tacplus floor to 2.6 and commit tacplus.lock (#13) (0404244) - HISTORY.md: #4 (looper) (8973195) 0.1.1 0.1 0.1.0 Changes since v0.1.0:  - HISTORY.md: #13 (looper) (d4aea91) pwd: error retrieving current directory: ...
+= thinking_tokens
+= thinking_tokens
+Works. Now the justfile, README and STATE.md.
+> Bash cd /builds/looper/doppelganger/issues/2; sed -n 110,140p README.md; head -30 PROPOSALS.md
+< | Vendor | No training on API inputs | Retention and settings | Terms | |---|---|---|---| | Anthropic (Claude) | not recorded: live in llmproxy before its data-terms rule | not recorded | — | | OpenAI | yes: API data is not used for training unless we opt in, and we do not | abuse-monitoring logs pe...
+> Bash cd /builds/looper/doppelganger/issues/2; python3 - <<'EOF' p='justfile'; s=open(p).read() s=s.replace("""    go test ./internal/...  install:""","""    go test ./internal/...     scripts/release_test.sh  install:""") open(p,'w').write(s) p='README.md'; s=open(p).read() s=s.replace("""## Notes """,""...
+<  README.md | 38 ++++++++++++++++++++++++++++++++++++++  justfile  |  1 +  2 files changed, 39 insertions(+)
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/doppelganger/issues/2; python3 - <<'EOF' p='STATE.md'; s=open(p).read() s=s.replace("Last updated: 2026-11-06 by the looper (#13).","Last updated: 2026-11-13 by the looper (#2).") s=s.replace("- **Version / line:** unreleased (no tag yet, #2);","- **Version / line:** 0.1, `v0.1.0` ...
+< --- a/STATE.md +++ b/STATE.md -Overwritten to stay current (loopers and agents). Last updated: 2026-11-06 by the looper (#13). +Overwritten to stay current (loopers and agents). Last updated: 2026-11-13 by the looper (#2). -- **Version / line:** unreleased (no tag yet, #2); tacplus floor 2.6, pinned...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/doppelganger/issues/2; python3 - <<'EOF' p='Dockerfile'; s=open(p).read() s=s.replace("""# Release image: the pre-built static doppelganger binary on a minimal base. The binary # is built by the fleet's image pipeline against the fleet's merged protos.""","""# Release image: the pr...
+< looper-trace: /builds/looper/doppelganger/issues/2 verdict: pass (0 handlers, 0 findings)
+= thinking_tokens
+= thinking_tokens
+No handlers touched; looper-trace passes. Committing and running the build job.
+> Bash cd /builds/looper/doppelganger/issues/2; git add -A; git status --short; git commit -q -F - <<'EOF' Release by tag: release.yml publishes the image and the GitHub release (#2)  Fleets pin doppelganger by release line, and seatrials' first deploy needs its image (fleet-seatrials#1). Jody's phase 2 (2...
+< A  .github/workflows/release.yml M  Dockerfile M  PROPOSALS.md M  README.md M  STATE.md M  justfile A  scripts/release-build.sh A  scripts/release-image.sh A  scripts/release-notes.sh A  scripts/release-tags.sh A  scripts/release_test.sh ded32c2 Release by tag: release.yml publishes the image and th...
+= thinking_tokens
+= thinking_tokens
+> Bash gh auth status 2>&1 | head -8; gh api repos/tacplus-dev/doppelganger -q .permissions; gh workflow list --repo tacplus-dev/doppelganger
+< github.com   ✓ Logged in to github.com account x-access-token (/tmp/looper-tokens.1NamUp/report/hosts.yml)   - Active account: true   - Git operations protocol: https   - Token: ghs_**********************************************************************************************************************...
+> Monitor until ! kill -0 3654 2>/dev/null; do sleep 20; done; tail -30 /tmp/build-2.log
+< <tool_use_error>InputValidationError: Monitor failed due to the following issue: The required parameter `description` is missing  This tool's schema was not sent to the API — it was not in the discovered-tool set derived from message history. Without the schema in your prompt, typed parameters (arra...
+> Bash for i in $(seq 1 55); do kill -0 3654 2>/dev/null || break; sleep 10; done; tail -25 /tmp/build-2.log
+= task_started
+= task_notification
+< To https://github.com/tacplus-dev/doppelganger.git  ! [remote rejected] a930a5630ece674bf44009869a3b179b0d83066e -> looper/doppelganger-2 (refusing to allow a GitHub App to create or update workflow `.github/workflows/release.yml` without `workflows` permission) error: failed to push some refs to 'h...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash head -40 /tmp/build-2.log; kill -0 3654 && echo running
+< To https://github.com/tacplus-dev/doppelganger.git  ! [remote rejected] a930a5630ece674bf44009869a3b179b0d83066e -> looper/doppelganger-2 (refusing to allow a GitHub App to create or update workflow `.github/workflows/release.yml` without `workflows` permission) error: failed to push some refs to 'h...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash gh issue view 106 --repo tacplus-dev/looper --comments | tail -40; gh search issues --repo tacplus-dev/looper "workflows permission" --state open --json number,title -q '.[]|"\(.number) \(.title)"'
+< status:	none -- The manager merged [`looper/looper-106`](https://github.com/tacplus-dev/looper/tree/looper/looper-106) on main: 9e1f9fa..446c89a, on the gates docs+token (all 4 changed paths map to docs, token): green. The branch is deleted. Its gates: job https://gitlab.com/tacplus-dev/looper/-/job...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash gh issue view 115 --repo tacplus-dev/looper --json state,body -q '.state+"\n"+.body' | head -40; echo ----; gh issue view 315 --repo tacplus-dev/tacplus --json state,title -q '.state+" "+.title'; gh issue view 315 --repo tacplus-dev/tacplus --comments | grep -i -B2 -A5 "workflow" | tail -30
+< OPEN Jody, 2026-11-09: accepted the security suggestion [A report's branch can't publish the looper image](https://github.com/tacplus-dev/roadmap/blob/main/suggestions/2026-11-09-a-report-s-branch-can-t-publish-the-looper-image.md).  **Risk.** Since #106 (446c89a), a report's `tacplus-looper` token ...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash for i in $(seq 1 55); do kill -0 3654 2>/dev/null || break; sleep 10; done; tail -15 /tmp/build-2.log; gh issue view 125 --repo tacplus-dev/looper --json state,title -q '.state+" "+.title'; gh issue view 128 --repo tacplus-dev/looper --json state,title -q '.state+" "+.title'; gh label list --repo ta...
+= task_started
+= task_notification
+< To https://github.com/tacplus-dev/doppelganger.git  ! [remote rejected] a930a5630ece674bf44009869a3b179b0d83066e -> looper/doppelganger-2 (refusing to allow a GitHub App to create or update workflow `.github/workflows/release.yml` without `workflows` permission) error: failed to push some refs to 'h...
+> Bash for i in $(seq 1 57); do kill -0 3654 2>/dev/null || break; sleep 10; done; kill -0 3654 && echo still running; tail -6 /tmp/build-2.log
+= task_started
+= task_notification
+< still running To https://github.com/tacplus-dev/doppelganger.git  ! [remote rejected] a930a5630ece674bf44009869a3b179b0d83066e -> looper/doppelganger-2 (refusing to allow a GitHub App to create or update workflow `.github/workflows/release.yml` without `workflows` permission) error: failed to push s...
+= thinking_tokens
+= thinking_tokens
+> Bash curl -s "https://gitlab.com/api/v4/projects/tacplus-dev%2Fbuild/pipelines/3063061638" | head -c 400; echo; curl -s "https://gitlab.com/api/v4/projects/tacplus-dev%2Fbuild/pipelines/3063061638/jobs" | jq -r '.[]|.name+" "+.status+" "+(.id|tostring)' 2>/dev/null
+< Exit code 5 {"message":"404 Project Not Found"}
+= thinking_tokens
+= thinking_tokens
+> Bash for i in $(seq 1 58); do kill -0 3654 2>/dev/null || break; sleep 10; done; kill -0 3654 && echo still running; tail -4 /tmp/build-2.log
+= task_started
+= task_notification
+< still running error: failed to push some refs to 'https://github.com/tacplus-dev/doppelganger.git' [2026-11-13T05:09:38Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  13 files changed, 763 insertions(+), 5 deletions(-) [2026-11-13T05:09:38Z] build requested: doppelganger ded32c2, the...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash mkdir -p ~/issue2 && cp /builds/looper/doppelganger/issues/2/.github/workflows/release.yml ~/issue2/; for i in $(seq 1 58); do kill -0 3654 2>/dev/null || break; sleep 10; done; kill -0 3654 && echo still running; tail -4 /tmp/build-2.log
+= task_started
+= task_notification
+< still running error: failed to push some refs to 'https://github.com/tacplus-dev/doppelganger.git' [2026-11-13T05:09:38Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  13 files changed, 763 insertions(+), 5 deletions(-) [2026-11-13T05:09:38Z] build requested: doppelganger ded32c2, the...
+= thinking_tokens
+= thinking_tokens
+> Bash for i in $(seq 1 58); do kill -0 3654 2>/dev/null || break; sleep 10; done; kill -0 3654 && echo still running; tail -4 /tmp/build-2.log
+= task_started
+= task_notification
+< still running error: failed to push some refs to 'https://github.com/tacplus-dev/doppelganger.git' [2026-11-13T05:09:38Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  13 files changed, 763 insertions(+), 5 deletions(-) [2026-11-13T05:09:38Z] build requested: doppelganger ded32c2, the...
+Still waiting on the build job (about 50 minutes so far, probably queued). Polling it.
+> Bash for i in $(seq 1 58); do kill -0 3654 2>/dev/null || break; sleep 10; done; kill -0 3654 && echo still running; tail -4 /tmp/build-2.log; git -C /builds/looper/doppelganger/issues/2 ls-remote origin 'refs/heads/looper/doppelganger-2'
+= task_started
+= task_notification
+< still running error: failed to push some refs to 'https://github.com/tacplus-dev/doppelganger.git' [2026-11-13T05:09:38Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  13 files changed, 763 insertions(+), 5 deletions(-) [2026-11-13T05:09:38Z] build requested: doppelganger ded32c2, the...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash kill 3654; cd /builds/looper/doppelganger/issues/2; git reset -q --soft HEAD~1; git rm -q --cached .github/workflows/release.yml; rm .github/workflows/release.yml; git status --short
+< M  Dockerfile M  PROPOSALS.md M  README.md M  STATE.md M  justfile A  scripts/release-build.sh A  scripts/release-image.sh A  scripts/release-notes.sh A  scripts/release-tags.sh A  scripts/release_test.sh
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/doppelganger/issues/2; python3 - <<'EOF' p='README.md'; s=open(p).read() old="""The tag runs [release.yml](.github/workflows/release.yml): the gates""" assert old in s s=s.replace(old,"""**Not yet:** `.github/workflows/release.yml` is not on main. Its scripts are, but no looper tok...
+< 9:- **Blocked on:** the live panel and its backtests on llmproxy turning OpenAI   on (its `LIVE_VENDORS`, with Jody's recorded terms) and a deployment; the image of v0.1.0 on release.yml, which waits on tacplus-dev/looper#115 (#2)
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/doppelganger/issues/2; git add -A; git commit -q -F - <<'EOF' Release scripts: image tags, notes, the build in the pinned image (#2)  Fleets pin doppelganger by release line, and seatrials' first deploy needs its image (fleet-seatrials#1). Jody's phase 2 (2026-11-07) publishes it f...
+< 10643ae Release scripts: image tags, notes, the build in the pinned image (#2) pid 14756
+= thinking_tokens
+= thinking_tokens
+While that builds, I'm drafting the issue comment, which will carry the full `release.yml` so a member or the next run can apply it.
+> Bash sleep 60; head -8 /tmp/build-2b.log
+< <tool_use_error>Blocked: sleep 60 followed by: head -8 /tmp/build-2b.log. To wait for a condition, use Monitor with an until-loop (e.g. `until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to work around this block.</tool_use...
+> Bash for i in $(seq 1 12); do grep -q "build job" /tmp/build-2b.log && break; sleep 5; done; cat /tmp/build-2b.log
+< remote:  remote: Create a pull request for 'looper/doppelganger-2' on GitHub by visiting:         remote:      https://github.com/tacplus-dev/doppelganger/pull/new/looper/doppelganger-2         remote:  [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files chan...
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/doppelganger/issues/2; git fetch -q origin looper/doppelganger-2; git diff --stat origin/main origin/looper/doppelganger-2 | tail -15; git log --oneline origin/main..origin/looper/doppelganger-2
+<  .looper/claude.log       | 324 +++++++++++++++++++++++++++++++++++++++++++++++  .looper/prompt.md        | 149 ++++++++++++++++++++++  Dockerfile               |   3 +-  PROPOSALS.md             |   2 +  README.md                |  42 ++++++  STATE.md                 |   8 +-  justfile             ...
+The branch is pushed now (the looper's run log rides along on its checkpoint commit, not in mine). Waiting for the build.
+> Bash for i in $(seq 1 58); do kill -0 14756 2>/dev/null || break; sleep 10; done; kill -0 14756 && echo still running; tail -5 /tmp/build-2b.log
+= task_started
+= task_notification
+< still running remote:      https://github.com/tacplus-dev/doppelganger/pull/new/looper/doppelganger-2         remote:  [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppe...
+> Bash for i in $(seq 1 58); do kill -0 14756 2>/dev/null || break; sleep 10; done; kill -0 14756 && echo still running; tail -5 /tmp/build-2b.log
+= task_started
+= task_notification
+< still running remote:      https://github.com/tacplus-dev/doppelganger/pull/new/looper/doppelganger-2         remote:  [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppe...
+= thinking_tokens
+= thinking_tokens
+Build is slow (likely queued). Since the land re-runs the same gates, I'll checkpoint and queue the land in parallel rather than wait serially.
+> Bash cd /builds/looper/doppelganger/issues/2; /usr/local/bin/repo-looper --repo doppelganger --issue 2 --checkpoint "committed 10643ae: release scripts (tags, notes, build in pinned image, image), release_test.sh in gates, README/STATE/PROPOSALS. .github/workflows/release.yml can't be pushed (report toke...
+< [2026-11-13T06:37:07Z] checkpoint of #2 (a step) pushed to looper/doppelganger-2:  12 files changed, 789 insertions(+), 5 deletions(-) pid 18141
+> Bash for i in $(seq 1 58); do kill -0 14756 2>/dev/null || break; sleep 10; done; echo BUILD; tail -4 /tmp/build-2b.log; echo LAND; tail -4 /tmp/land-2.log
+= task_started
+= task_notification
+< BUILD remote:  [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppelganger 10643ae, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pip...
+Meanwhile, I'll write the issue comment draft with the workflow text.
+> Bash cd ~/issue2; { cat <<'EOF' The looper of doppelganger, run of 2026-11-13: **the release workflow can't be pushed yet; everything it runs is queued to land.**  **Why it waits.** looper#106 gave the report token `workflows: write`, but looper#115's stopgap (2026-11-09) took it off again until a member...
+< 159 comment.md Shell cwd was reset to /builds/looper/doppelganger/issues/2
+> Bash for i in $(seq 1 58); do kill -0 14756 2>/dev/null || ! kill -0 18141 2>/dev/null && break; sleep 10; done; echo BUILD; tail -6 /tmp/build-2b.log; echo LAND; tail -4 /tmp/land-2.log
+< BUILD remote: Create a pull request for 'looper/doppelganger-2' on GitHub by visiting:         remote:      https://github.com/tacplus-dev/doppelganger/pull/new/looper/doppelganger-2         remote:  [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed...
+I'm posting the comment now so the workflow text is saved on the issue even if time runs out:
+> Bash gh issue comment 2 --repo tacplus-dev/doppelganger --body-file ~/issue2/comment.md
+< https://github.com/tacplus-dev/doppelganger/issues/2#issuecomment-6846251633
+> Bash for i in $(seq 1 58); do { kill -0 14756 2>/dev/null && kill -0 18141 2>/dev/null; } || break; sleep 10; done; echo BUILD; tail -6 /tmp/build-2b.log; echo LAND; tail -4 /tmp/land-2.log
+= task_started
+= task_notification
+< BUILD remote: Create a pull request for 'looper/doppelganger-2' on GitHub by visiting:         remote:      https://github.com/tacplus-dev/doppelganger/pull/new/looper/doppelganger-2         remote:  [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed...
+> Bash for i in $(seq 1 58); do { kill -0 14756 2>/dev/null && kill -0 18141 2>/dev/null; } || break; sleep 10; done; date -u +%T; echo BUILD; tail -3 /tmp/build-2b.log; echo LAND; tail -3 /tmp/land-2.log
+= task_started
+= task_notification
+< 07:06:35 BUILD [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppelganger 10643ae, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pip...
+= thinking_tokens
+= thinking_tokens
+> Bash for i in $(seq 1 58); do { kill -0 14756 2>/dev/null && kill -0 18141 2>/dev/null; } || break; sleep 10; done; date -u +%T; echo BUILD; tail -3 /tmp/build-2b.log; echo LAND; tail -3 /tmp/land-2.log
+= task_started
+= task_notification
+< 07:16:18 BUILD [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppelganger 10643ae, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pip...
+> Bash for i in $(seq 1 58); do { kill -0 14756 2>/dev/null && kill -0 18141 2>/dev/null; } || break; sleep 10; done; date -u +%T; echo BUILD; tail -3 /tmp/build-2b.log; echo LAND; tail -3 /tmp/land-2.log
+= task_started
+= task_notification
+< 07:26:01 BUILD [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppelganger 10643ae, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pip...
+> Bash for i in $(seq 1 58); do { kill -0 14756 2>/dev/null && kill -0 18141 2>/dev/null; } || break; sleep 10; done; date -u +%T; echo BUILD; tail -3 /tmp/build-2b.log; echo LAND; tail -3 /tmp/land-2.log
+= task_started
+= task_notification
+< 07:35:44 BUILD [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppelganger 10643ae, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pip...
+Still waiting: the build has run 1h20m and the land has been queued for an hour. I'll keep polling until about 08:30, then write the outcome. The manager lands the commit even after this run ends.
+> Bash for i in $(seq 1 58); do { kill -0 14756 2>/dev/null && kill -0 18141 2>/dev/null; } || break; sleep 10; done; date -u +%T; echo BUILD; tail -3 /tmp/build-2b.log; echo LAND; tail -3 /tmp/land-2.log
+= task_started
+= task_notification
+< 07:45:27 BUILD [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppelganger 10643ae, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pip...
+> Bash for i in $(seq 1 58); do { kill -0 14756 2>/dev/null && kill -0 18141 2>/dev/null; } || break; sleep 10; done; date -u +%T; echo BUILD; tail -3 /tmp/build-2b.log; echo LAND; tail -3 /tmp/land-2.log
+= task_started
+= task_notification
+< 07:55:09 BUILD [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppelganger 10643ae, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pip...
+> Bash for i in $(seq 1 58); do { kill -0 14756 2>/dev/null && kill -0 18141 2>/dev/null; } || break; sleep 10; done; date -u +%T; echo BUILD; tail -3 /tmp/build-2b.log; echo LAND; tail -3 /tmp/land-2.log
+= task_started
+= task_notification
+< 08:04:52 BUILD [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppelganger 10643ae, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pip...
+> Bash for i in $(seq 1 58); do { kill -0 14756 2>/dev/null && kill -0 18141 2>/dev/null; } || break; sleep 10; done; date -u +%T; echo BUILD; tail -3 /tmp/build-2b.log; echo LAND; tail -3 /tmp/land-2.log
+= task_started
+= task_notification
+< 08:14:34 BUILD [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppelganger 10643ae, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pip...
+> Bash for i in $(seq 1 58); do { kill -0 14756 2>/dev/null && kill -0 18141 2>/dev/null; } || break; sleep 10; done; date -u +%T; echo BUILD; tail -3 /tmp/build-2b.log; echo LAND; tail -3 /tmp/land-2.log
+= task_started
+= task_notification
+< 08:24:17 BUILD [2026-11-13T06:17:28Z] checkpoint of #2 (a build) pushed to looper/doppelganger-2:  12 files changed, 765 insertions(+), 5 deletions(-) [2026-11-13T06:17:28Z] build requested: doppelganger 10643ae, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pip...
+= thinking_tokens
+= thinking_tokens
+Nearly out of time, so I'm wrapping up. The land stays queued with the manager, which lands the commit after this run ends.
+> Bash cd /builds/looper/doppelganger/issues/2; /usr/local/bin/repo-looper --repo doppelganger --issue 2 --checkpoint "10643ae (release scripts, test in gates, README/STATE/PROPOSALS) queued to land; build job 3063239376 gave no verdict within the run. release.yml is posted on #2 (comment 6846251633): it c...
+< [2026-11-13T08:24:31Z] checkpoint of #2 (a step) pushed to looper/doppelganger-2:  13 files changed, 845 insertions(+), 5 deletions(-) https://github.com/tacplus-dev/doppelganger/issues/2#issuecomment-6847908963 Blocked-by: tacplus-dev/looper#115
+The v0.1.0 image is not published yet. The workflow that would publish it can't be pushed: since 2026-11-09 the looper's GitHub token has not had `workflows: write`, and tacplus-dev/looper#115 is the issue that turns it back on. I recorded `Blocked-by: tacplus-dev/looper#115` and left issue #2 open.
+
+**Queued to land:** commit `10643ae` holds everything the workflow runs. The manager hasn't given its verdict yet; it lands the commit after this run ends if the gates pass, and posts the result on the issue.
+- `scripts/release-tags.sh` gives each release its image tags. `X.Y.Z` always; the line tag `X.Y` only when this is the line's highest patch, so a line never moves backwards and a patch never moves another line. It also names the release GitHub should mark Latest.
+- `scripts/release-notes.sh` writes the commits since the previous release.
+- `scripts/release_test.sh` tests both scripts and now runs in `just gates`.
+- `scripts/release-build.sh` runs the tag's gates in the build image its own `tacplus.lock` pins, then builds the binary and the launcher.
+- `scripts/release-image.sh` builds the Dockerfile, labelled with version and commit, and pushes it under those tags.
+- README has a "Releasing" section, which says the workflow isn't on main yet. STATE.md and PROPOSALS.md are updated.
+
+**The workflow:** the full `.github/workflows/release.yml` is in a comment on #2. It is modelled on llmproxy's:
+- It runs on `v*.*.*` tags and builds arm64 only. amd64 is off by default, as in the fleets.
+- A manual run publishes an existing tag as it was tagged, which is how v0.1.0 gets its image without moving the tag. Without `publish` it is a dry run.
+- If seatrials can't wait for looper#115, a member can commit that file to main directly. It needs only the scripts in `10643ae`.
+
+**What was verified:**
+- Locally, the release script test passes (17 checks) and actionlint passes on the workflow.
+- The build job I started (pipeline 3063239376) gave no verdict in over two hours, so the gates have not run in the build image this run. The land runs them.
+- The workflow itself has never run.
+- Whether the run's token may start a workflow by hand is untried.
+- Whether the package comes out public is also open. The org's other packages pull with no credential, so it should.
+
+**Not done:** I cut no release for this change, because nothing in the image changed since v0.1.0. No request in the issue's comments came from anyone without write access. No service handler was touched, and `looper-trace check` passes.
+
+**Left for the next run, once looper#115 is done:**
+1. Commit and land `release.yml`.
+2. Run it once to publish v0.1.0.
+3. Do a dry run of v0.1.1 to show `0.1` moves and no older line does.
+4. Confirm an anonymous pull of `ghcr.io/tacplus-dev/doppelganger:0.1` works.
+5. Update README and STATE.md, then close the issue.
+= success: The v0.1.0 image is not published yet. The workflow that would publish it can't be pushed: since 2026-11-09 the looper's GitHub token has not had `workflows: write`, and tacplus-dev/looper#115 is the issue that turns it back on. I recorded `Blocked-by: tacplus-dev/looper#115` and left issue #2 open.
+
+**Queued to land:** commit `10643ae` holds everything the workflow runs. The manager hasn't given its verdict yet; it lands the commit after this run ends if the gates pass, and posts the result on the issue.
+- `scripts/release-tags.sh` gives each release its image tags. `X.Y.Z` always; the line tag `X.Y` only when this is the line's highest patch, so a line never moves backwards and a patch never moves another line. It also names the release GitHub should mark Latest.
+- `scripts/release-notes.sh` writes the commits since the previous release.
+- `scripts/release_test.sh` tests both scripts and now runs in `just gates`.
+- `scripts/release-build.sh` runs the tag's gates in the build image its own `tacplus.lock` pins, then builds the binary and the launcher.
+- `scripts/release-image.sh` builds the Dockerfile, labelled with version and commit, and pushes it under those tags.
+- README has a "Releasing" section, which says the workflow isn't on main yet. STATE.md and PROPOSALS.md are updated.
+
+**The workflow:** the full `.github/workflows/release.yml` is in a comment on #2. It is modelled on llmproxy's:
+- It runs on `v*.*.*` tags and builds arm64 only. amd64 is off by default, as in the fleets.
+- A manual run publishes an existing tag as it was tagged, which is how v0.1.0 gets its image without moving the tag. Without `publish` it is a dry run.
+- If seatrials can't wait for looper#115, a member can commit that file to main directly. It needs only the scripts in `10643ae`.
+
+**What was verified:**
+- Locally, the release script test passes (17 checks) and actionlint passes on the workflow.
+- The build job I started (pipeline 3063239376) gave no verdict in over two hours, so the gates have not run in the build image this run. The land runs them.
+- The workflow itself has never run.
+- Whether the run's token may start a workflow by hand is untried.
+- Whether the package comes out public is also open. The org's other packages pull with no credential, so it should.
+
+**Not done:** I cut no release for this change, because nothing in the image changed since v0.1.0. No request in the issue's comments came from anyone without write access. No service handler was touched, and `looper-trace check` passes.
+
+**Left for the next run, once looper#115 is done:**
+1. Commit and land `release.yml`.
+2. Run it once to publish v0.1.0.
+3. Do a dry run of v0.1.1 to show `0.1` moves and no older line does.
+4. Confirm an anonymous pull of `ghcr.io/tacplus-dev/doppelganger:0.1` works.
+5. Update README and STATE.md, then close the issue.
