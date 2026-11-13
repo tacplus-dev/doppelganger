@@ -987,7 +987,7 @@ func panelTrackRecord(runs []*pb.PanelRun) *pb.GetPanelTrackRecordResponse {
 		resp.Records = append(resp.Records, &pb.PanelTrackRecord{
 			Model:        &pb.PanelModel{ModelAlias: k.alias, ResolvedModel: k.model},
 			QuestionKind: k.kind,
-			Runs:         int32(len(c.runs)),
+			Runs:         int32Of(len(c.runs)),
 			Answers:      c.answers,
 			TopHits:      c.hits,
 			MeanRank:     float64(c.rankTotal) / float64(c.answers),
