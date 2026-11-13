@@ -788,7 +788,7 @@ func proposedBy(o *pb.PanelOption, m *pb.PanelModel) bool {
 // every answer that did not as a dissent, and every objection to it and every
 // would-change-mind word for word. The same answers always tally the same.
 func tallyPanel(options []*pb.PanelOption, answers []*pb.PanelAnswer, q PanelQuestion, failures int) *pb.PanelResult {
-	n := int32(len(options))
+	n := int32Of(len(options))
 	tallies := make([]*pb.PanelOptionTally, len(options))
 	byID := map[string]*pb.PanelOptionTally{}
 	for i, o := range options {
