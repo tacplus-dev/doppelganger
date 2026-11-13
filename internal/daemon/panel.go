@@ -810,7 +810,7 @@ func tallyPanel(options []*pb.PanelOption, answers []*pb.PanelAnswer, q PanelQue
 	res := &pb.PanelResult{
 		Provenance:  pb.Provenance_PROVENANCE_DERIVED_PANEL,
 		TopOptionId: top.GetOptionId(),
-		Agreement:   top.GetFirstPlace() * 100 / int32(len(answers)),
+		Agreement:   top.GetFirstPlace() * 100 / int32Of(len(answers)),
 		Tallies:     tallies,
 	}
 	for _, a := range answers {
