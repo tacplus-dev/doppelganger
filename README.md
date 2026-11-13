@@ -123,6 +123,48 @@ just build
 just test
 ```
 
+## Releasing
+
+doppelganger is released by version, and fleets pin a release line, `MAJOR.MINOR`, which is always that line's
+highest patch ([tacplus#180](https://github.com/tacplus-dev/tacplus/issues/180)). Versions are `0.x` until
+SeaBeam's launch (2026-12-01), when `1.0.0` is cut; on `0.x` a minor may break, a patch never does.
+
+A change merged to main is released by the same run that merged it: a fix as the next patch, a feature as the
+next minor. To cut one, from the commit to release on green main:
+
+```sh
+git tag -a v0.1.1 -m "doppelganger 0.1.1: ..."   # a patch to an older line is tagged on release/MAJOR.MINOR
+git push origin v0.1.1
+```
+
+**Not yet:** `.github/workflows/release.yml` is not on main. Its scripts are, but no looper token may push a
+workflow file until tacplus-dev/looper#115, and the workflow itself is on #2; until it lands a tag publishes
+nothing. Once it is:
+
+The tag runs `.github/workflows/release.yml`: the gates on the tag, in the build image its
+`tacplus.lock` pins ([scripts/release-build.sh](scripts/release-build.sh)), then
+`ghcr.io/tacplus-dev/doppelganger:<version>` from the [Dockerfile](Dockerfile)
+([scripts/release-image.sh](scripts/release-image.sh)), labelled with the version and commit
+(`org.opencontainers.image.version`, `.revision`), and `:<MAJOR.MINOR>` moved to it only when it is the line's
+highest patch, so the line tag never goes backwards and no other line moves
+([scripts/release-tags.sh](scripts/release-tags.sh)). The image is for linux/arm64, what the fleets run on;
+amd64 is off by default, as in the fleets, and `ARCHS: arm64 amd64` in release.yml builds both. The GitHub
+release's notes are the commits since the previous release ([scripts/release-notes.sh](scripts/release-notes.sh)),
+and it is marked Latest only when it is the highest release, never a patch on an older line. A pre-release
+(`v0.2.0-rc.1`) publishes only its own tag. The package is public: pulls need no credential.
+
+Running the workflow by hand releases an existing tag as it was tagged (its source, gates, `tacplus.lock` and
+Dockerfile), for a tag made before the workflow, as v0.1.0 was; without `publish` it is a dry run that
+publishes nothing, of that tag or of HEAD as a new version, and prints the tags and notes it would get:
+
+```sh
+gh workflow run release.yml -f version=v0.1.0 -f publish=true   # publish the existing tag v0.1.0
+gh workflow run release.yml -f version=v0.1.1                   # dry run: HEAD as v0.1.1
+```
+
+A tag is never moved or deleted. The image runs under the [launcher](https://github.com/tacplus-dev/launcher),
+built from source at the commit `LAUNCHER_COMMIT` in release.yml names.
+
 ## Notes
 
 - The socket path is declared once, in the proto; the daemon and the CLI use the generated

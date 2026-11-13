@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Release image: the pre-built static doppelganger binary on a minimal base. The binary
-# is built by the fleet's image pipeline against the fleet's merged protos.
+# is built by the fleet's image pipeline against the fleet's merged protos, or by
+# release.yml (scripts/release-build.sh) against this repository's.
 ARG BASE_IMAGE=alpine:3.24
 FROM ${BASE_IMAGE}
 ARG VERSION=0.0.0
