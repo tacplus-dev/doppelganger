@@ -309,7 +309,7 @@ func (p *Panel) Run(ctx context.Context, tenant string, q PanelQuestion) (*pb.Pa
 			Model:           model,
 			Lens:            j.lens.lens,
 			RankedOptionIds: out.Ranked,
-			Confidence:      int32(out.Confidence),
+			Confidence:      int32Of(out.Confidence),
 			WouldChangeMind: out.WouldChangeMind,
 			AnsweredAtMs:    p.clock().UnixMilli(),
 		}
