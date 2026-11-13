@@ -309,7 +309,7 @@ func (p *Panel) Run(ctx context.Context, tenant string, q PanelQuestion) (*pb.Pa
 			Model:           model,
 			Lens:            j.lens.lens,
 			RankedOptionIds: out.Ranked,
-			Confidence:      int32(out.Confidence),
+			Confidence:      int32Of(out.Confidence),
 			WouldChangeMind: out.WouldChangeMind,
 			AnsweredAtMs:    p.clock().UnixMilli(),
 		}
@@ -788,7 +788,7 @@ func proposedBy(o *pb.PanelOption, m *pb.PanelModel) bool {
 // every answer that did not as a dissent, and every objection to it and every
 // would-change-mind word for word. The same answers always tally the same.
 func tallyPanel(options []*pb.PanelOption, answers []*pb.PanelAnswer, q PanelQuestion, failures int) *pb.PanelResult {
-	n := int32(len(options))
+	n := int32Of(len(options))
 	tallies := make([]*pb.PanelOptionTally, len(options))
 	byID := map[string]*pb.PanelOptionTally{}
 	for i, o := range options {
@@ -810,7 +810,7 @@ func tallyPanel(options []*pb.PanelOption, answers []*pb.PanelAnswer, q PanelQue
 	res := &pb.PanelResult{
 		Provenance:  pb.Provenance_PROVENANCE_DERIVED_PANEL,
 		TopOptionId: top.GetOptionId(),
-		Agreement:   top.GetFirstPlace() * 100 / int32(len(answers)),
+		Agreement:   top.GetFirstPlace() * 100 / int32Of(len(answers)),
 		Tallies:     tallies,
 	}
 	for _, a := range answers {
@@ -987,7 +987,7 @@ func panelTrackRecord(runs []*pb.PanelRun) *pb.GetPanelTrackRecordResponse {
 		resp.Records = append(resp.Records, &pb.PanelTrackRecord{
 			Model:        &pb.PanelModel{ModelAlias: k.alias, ResolvedModel: k.model},
 			QuestionKind: k.kind,
-			Runs:         int32(len(c.runs)),
+			Runs:         int32Of(len(c.runs)),
 			Answers:      c.answers,
 			TopHits:      c.hits,
 			MeanRank:     float64(c.rankTotal) / float64(c.answers),

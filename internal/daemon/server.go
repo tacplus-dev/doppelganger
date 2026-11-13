@@ -197,7 +197,7 @@ func (s *Server) UpdateContext(ctx context.Context, caller *servicemanager.Calle
 	if err != nil {
 		return nil, contextError(err)
 	}
-	return &pb.UpdateContextResponse{FileCount: int32(n), ByteCount: bytes}, nil
+	return &pb.UpdateContextResponse{FileCount: int32Of(n), ByteCount: bytes}, nil
 }
 
 // UpdateTenantContext replaces the tenant's shared context. Who may call it is
@@ -214,7 +214,7 @@ func (s *Server) UpdateTenantContext(ctx context.Context, caller *servicemanager
 	if err != nil {
 		return nil, contextError(err)
 	}
-	return &pb.UpdateTenantContextResponse{FileCount: int32(n), ByteCount: bytes}, nil
+	return &pb.UpdateTenantContextResponse{FileCount: int32Of(n), ByteCount: bytes}, nil
 }
 
 func contextError(err error) error {
