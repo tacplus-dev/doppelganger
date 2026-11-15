@@ -15,3 +15,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-07 looper issue tacplus floor 2.5 is behind the latest released line (2.6): move the floor to 2.6 and commit tacplus.lock (#13)
 - 2026-11-14 looper issue go.mod: go 1.26.10 → 1.26.11 (net/http GO-2026-6859, reachable) (#14, c8e1964)
 - 2026-11-14 looper release v0.1.1 (https://github.com/tacplus-dev/doppelganger/releases/tag/v0.1.1)
+- 2026-11-15 looper release v0.2.0 (https://github.com/tacplus-dev/doppelganger/releases/tag/v0.2.0)
