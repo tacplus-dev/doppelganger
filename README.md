@@ -137,12 +137,7 @@ git tag -a v0.1.2 -m "doppelganger 0.1.2: ..."   # a patch to an older line is t
 git push origin v0.1.2
 ```
 
-**Not yet:** `.github/workflows/release.yml` is not on main. Its scripts are, and the workflow itself is on #2,
-but a looper's token may push a workflow file only while its issue carries `looper:workflows`, set by a member
-(tacplus-dev/looper#115); until it lands a tag publishes nothing (`v0.1.0` and `v0.1.1` are source tags only).
-Once it is:
-
-The tag runs `.github/workflows/release.yml`: the gates on the tag, in the build image its
+The tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml): the gates on the tag, in the build image its
 `tacplus.lock` pins ([scripts/release-build.sh](scripts/release-build.sh)), then
 `ghcr.io/tacplus-dev/doppelganger:<version>` from the [Dockerfile](Dockerfile)
 ([scripts/release-image.sh](scripts/release-image.sh)), labelled with the version and commit
@@ -164,8 +159,18 @@ gh workflow run release.yml -f version=v0.1.1 -f publish=true   # publish v0.1.1
 gh workflow run release.yml -f version=v0.1.2                   # dry run: HEAD as v0.1.2
 ```
 
-A tag is never moved or deleted. The image runs under the [launcher](https://github.com/tacplus-dev/launcher),
-built from source at the commit `LAUNCHER_COMMIT` in release.yml names.
+A looper's token cannot dispatch a workflow (no `actions: write`) but can send a `repository_dispatch` event
+(`contents: write`), and release.yml answers a `release` event with the same inputs in its payload, so the run
+that lands a release can also publish it and watch the run (`gh run list --workflow release.yml`):
+
+```sh
+gh api repos/tacplus-dev/doppelganger/dispatches --input - <<< '{"event_type":"release","client_payload":{"version":"v0.1.1","publish":true}}'
+```
+
+The scripts (tags, notes, build, image) are the run's checkout's: the tag's on a tag push, main's on a dispatch;
+the binaries, gates, lock and Dockerfile are always the tag's. A tag is never moved or deleted. The image runs
+under the [launcher](https://github.com/tacplus-dev/launcher), built from source at the commit `LAUNCHER_COMMIT`
+in release.yml names.
 
 ## Notes
 

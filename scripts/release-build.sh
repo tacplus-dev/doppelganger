@@ -7,7 +7,8 @@
 #
 # SRC is the checkout of the tag, LAUNCHER a checkout of github.com/tacplus-dev/launcher. Writes
 # OUT/doppelganger-linux-<arch> and OUT/launcher-linux-<arch> for each of ARCHS (default "arm64"). Needs docker
-# and no credential.
+# and no credential; GH_TOKEN, when set, reaches the container for tacplus build's fetch of the depends'
+# contracts from github.com (tacplus docs/USER.md, `src`).
 set -euo pipefail
 
 src="$(cd "$1" && pwd)"
@@ -27,7 +28,7 @@ done
 home="$(mktemp -d)"
 trap 'rm -rf "$home"' EXIT
 # shellcheck disable=SC2016 # expanded in the container
-docker run --rm -u "$(id -u):$(id -g)" -e HOME="$home" -e ARCHS="$archs" -e OUT="$out" -e LAUNCHER="$launcher" \
+docker run --rm -u "$(id -u):$(id -g)" -e HOME="$home" -e ARCHS="$archs" -e OUT="$out" -e LAUNCHER="$launcher" -e GH_TOKEN \
   -v "$src:$src" -v "$launcher:$launcher" -v "$out:$out" -v "$home:$home" -w "$src" \
   "$image" bash -euo pipefail -c '
     just gates
