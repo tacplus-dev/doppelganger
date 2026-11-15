@@ -26,7 +26,8 @@ for arch in $archs; do
 done
 
 home="$(mktemp -d)"
-trap 'rm -rf "$home"' EXIT
+# Go's module cache under it is read-only (0444 in 0555), which rm -rf refuses; a leftover temp never fails a release.
+trap 'chmod -R u+w "$home" 2>/dev/null || true; rm -rf "$home" || true' EXIT
 # shellcheck disable=SC2016 # expanded in the container
 docker run --rm -u "$(id -u):$(id -g)" -e HOME="$home" -e ARCHS="$archs" -e OUT="$out" -e LAUNCHER="$launcher" -e GH_TOKEN \
   -v "$src:$src" -v "$launcher:$launcher" -v "$out:$out" -v "$home:$home" -w "$src" \
