@@ -17,3 +17,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-14 looper release v0.1.1 (https://github.com/tacplus-dev/doppelganger/releases/tag/v0.1.1)
 - 2026-11-15 looper release v0.2.0 (https://github.com/tacplus-dev/doppelganger/releases/tag/v0.2.0)
 - 2026-11-15 looper issue Release: tag vMAJOR.MINOR.PATCH (start at v0.1.0) and publish its image (#2, 759af5e)
+- 2026-11-15 looper issue Declare route fields: a target tenant on every tenant-owned rpc, floor 2.5 (#6)
