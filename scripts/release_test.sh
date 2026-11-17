@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests of the release scripts (.github/workflows/release.yml): scripts/release-tags.sh and
-# scripts/release-notes.sh, on a throwaway repository with its own tags. Run by `just gates`.
+# scripts/release-notes.sh, on a throwaway repository with its own tags, and of the Dockerfile the release
+# image is built from. Run by `just gates`.
 #
 #   scripts/release_test.sh
 set -euo pipefail
@@ -71,6 +72,12 @@ check "a pre-release's notes: since the release below it" "$(notes v0.3.0-rc.1 |
 refused "not a version: refused (tags)" tags 0.1.0
 refused "not a version: refused (tags, v1.2)" tags v1.2
 refused "not a version: refused (notes)" notes main
+
+# The image takes its base's security fixes without waiting for the next point image (#22): the first apk
+# command upgrades the packages the base already has, in the layer that adds the image's own.
+check "the Dockerfile upgrades the base's packages before adding its own" \
+  "$(grep -o 'apk [a-z]* --no-cache' "$here/../Dockerfile" | head -2 | tr '\n' ' ')" \
+  "apk upgrade --no-cache apk add --no-cache "
 
 if ((fails)); then
   echo "release_test.sh: $fails failed"

@@ -13,7 +13,8 @@ LABEL org.opencontainers.image.title="doppelganger" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.source="https://github.com/tacplus-dev/doppelganger"
-RUN apk add --no-cache ca-certificates && adduser -D -u 65532 app \
+# apk upgrade takes the line's security fixes the base tag has not been rebuilt with yet (#22).
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates && adduser -D -u 65532 app \
     && mkdir -p /var/lib/doppelganger && chown 65532:65532 /var/lib/doppelganger
 # /var/lib/doppelganger holds repo_dir and state_dir (see Config). Without a
 # volume mounted there it is ephemeral; the deployment decides what backs it.
