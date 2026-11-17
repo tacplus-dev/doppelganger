@@ -18,3 +18,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-15 looper release v0.2.0 (https://github.com/tacplus-dev/doppelganger/releases/tag/v0.2.0)
 - 2026-11-15 looper issue Release: tag vMAJOR.MINOR.PATCH (start at v0.1.0) and publish its image (#2, 759af5e)
 - 2026-11-15 looper issue Declare route fields: a target tenant on every tenant-owned rpc, floor 2.5 (#6)
+- 2026-11-17 looper issue Releases are built with the pinned build image's go1.27.3: GO-2026-6859 still ships in the 0.2.0 and 0.1.1 images (re-pin tacplus.lock to 2.6.13, go1.27.4) (#21)
