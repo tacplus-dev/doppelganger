@@ -1,0 +1,8 @@
+# Findings the build's security checks accept (tacplus-dev/looper README: Security checks).
+# DS-0026 (trivy "No HEALTHCHECK defined"): rule-wide for this repository's Dockerfiles, decided on #23;
+# expires on a six-month review.
+exceptions:
+  - id: DS-0026
+    reason: "Docker's HEALTHCHECK does nothing for our images: Kubernetes runs them and ignores it, health comes from the operator's liveness/readiness probes, and the launcher (PID 1) kills a deadlocked child on gRPC health (HEALTH_PORT=8443)"
+    decided_by: jodydadescott (hub)
+    expires: 2027-05-17
