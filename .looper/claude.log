@@ -1,0 +1,170 @@
+= init
+> Bash cd /builds/looper/doppelganger/issues/25; git diff; git log --oneline -3; ls; /usr/local/bin/repo-looper --repo doppelganger --issue-text 25 | tail -20
+< diff --git a/Dockerfile b/Dockerfile index f765641..051de3e 100644 --- a/Dockerfile +++ b/Dockerfile @@ -4,7 +4,9 @@  # Release image: the pre-built static doppelganger binary on a minimal base. The binary  # is built by the fleet's image pipeline against the fleet's merged protos, or by  # release....
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/doppelganger/issues/25; bash scripts/release_test.sh 2>&1 | tail -5; t=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/alpine:pull" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])'); curl -sI -H "Authorization: Bearer $...
+< ok   not a version: refused (notes) ok   the Dockerfile upgrades the base's packages before adding its own ok   the Dockerfile pins every base by digest ok   a FROM on a floating tag is caught release_test.sh: all passed docker-content-digest: sha256:f59abe656b692d901e184be3445e084786602108599d2a51d...
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/doppelganger/issues/25; grep -rn "BASE_IMAGE\|release_test" . --exclude-dir=.git | grep -v "^./Dockerfile"; ls .github/workflows 2>/dev/null; git tag --sort=-v:refname | head -3; git log --oneline v0.2.2..origin/main; git branch -r | grep release
+< ./justfile:21:    scripts/release_test.sh ./PROPOSALS.md:22:- **Scan: `just gates` needs Docker the nightly scanner has none of** (2026-11-15, scan): the scan is asked to run the repository's gates on main, but `just gates` starts with `tacplus build`, whose wrapper (`/usr/local/bin/tacplus` in the ...
+> Bash cd /builds/looper/doppelganger/issues/25; git add Dockerfile scripts/release_test.sh && git commit -q -m "Pin the release image's base by digest, not the floating tag (#25)  alpine:3.24 floats: a rebuild of the same commit could ship a different, unscanned base (decisions/security-gates-ship-only-20...
+< 2f5e093 Pin the release image's base by digest, not the floating tag (#25) 1210
+> Bash cat /tmp/build25.log; cat /builds/looper/doppelganger/issues/25/STATE.md | head -40
+< [2026-11-24T19:42:58Z] checkpoint of #25 (a build) pushed to looper/doppelganger-25:  4 files changed, 225 insertions(+), 1 deletion(-) [2026-11-24T19:42:58Z] build requested: doppelganger 2f5e093, the gates full (no gates.yaml) # State: doppelganger  Overwritten to stay current (loopers and agents)...
+I've committed the digest pin and its test as 2f5e093. The full-gates build is running and I'm polling it.
+> Bash timeout 590 bash -c 'while kill -0 1210 2>/dev/null; do sleep 20; done'; tail -5 /tmp/build25.log
+< [2026-11-24T19:42:58Z] checkpoint of #25 (a build) pushed to looper/doppelganger-25:  4 files changed, 225 insertions(+), 1 deletion(-) [2026-11-24T19:42:58Z] build requested: doppelganger 2f5e093, the gates full (no gates.yaml) [2026-11-24T19:43:02Z] FATAL the looper did not start the build: GitLab...
+= thinking_tokens
+= thinking_tokens
+GitLab refused to start the build because the project has too many active pipelines. I'll retry in a few minutes.
+> Bash cd /builds/looper/doppelganger/issues/25; for i in 1 2 3 4 5 6; do sleep 90; /usr/local/bin/repo-looper --repo doppelganger --issue 25 --build > /tmp/build25.log 2>&1; rc=$?; grep -q "exceeded the allowed" /tmp/build25.log || break; done; echo rc=$rc; tail -8 /tmp/build25.log
+= background_tasks_changed
+= task_started
+< Command running in background with ID: bit8igsf7. Output is being written to: /builds/looper/doppelganger/homes/looper-25/tmp/claude-61000/-builds-looper-doppelganger-issues-25/8bd8a5e2-f267-4d6a-a496-098cec395d7f/tasks/bit8igsf7.output. You will be notified when it completes. To check interim outpu...
+> ToolSearch {"query":"select:Monitor","max_results":1}
+< 
+> Monitor f=/builds/looper/doppelganger/homes/looper-25/tmp/claude-61000/-builds-looper-doppelganger-issues-25/8bd8a5e2-f267-4d6a-a496-098cec395d7f/tasks/bit8igsf7.output; until grep -q '^rc=' "$f" 2>/dev/null; do sleep 15; done; cat "$f"
+= background_tasks_changed
+= task_started
+< Monitor started (task bd71kw1pg, expires in 10m unless the source ends first; you get one notice at expiry — re-arm if you still need the watch). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their repl...
+> Bash f=/builds/looper/doppelganger/homes/looper-25/tmp/claude-61000/-builds-looper-doppelganger-issues-25/8bd8a5e2-f267-4d6a-a496-098cec395d7f/tasks/bit8igsf7.output; timeout 580 bash -c "until grep -q '^rc=' $f; do sleep 15; done"; cat $f; tail -5 /tmp/build25.log
+= task_started
+= task_updated
+= task_notification
+= background_tasks_changed
+= task_notification
+< rc=2 [2026-11-24T19:52:33Z] build requested: doppelganger 2f5e093, the gates full (no gates.yaml) [2026-11-24T19:52:37Z] FATAL the looper did not start the build: GitLab refused to start the build: curl: (22) The requested URL returned error: 422 {"message":{"base":["Project exceeded the allowed num...
+= thinking_tokens
+= thinking_tokens
+GitLab has refused all seven build attempts so far with the same "exceeded the allowed number of jobs" error. I'll checkpoint, then keep retrying every 3 minutes for up to about an hour.
+> Bash cd /builds/looper/doppelganger/issues/25; /usr/local/bin/repo-looper --repo doppelganger --issue 25 --checkpoint "committed 2f5e093 (BASE_IMAGE pinned alpine:3.24@sha256:f59abe65..., digest checked against Docker Hub; release_test.sh fails on any FROM without @sha256:, passes locally); left: --build...
+< [2026-11-24T19:52:47Z] checkpoint of #25 (a step) pushed to looper/doppelganger-25:  4 files changed, 254 insertions(+), 1 deletion(-)
+= task_updated
+= task_notification
+= background_tasks_changed
+> Bash cd /builds/looper/doppelganger/issues/25; for i in $(seq 1 20); do /usr/local/bin/repo-looper --repo doppelganger --issue 25 --build > /tmp/build25.log 2>&1; rc=$?; grep -q "exceeded the allowed" /tmp/build25.log || break; sleep 180; done; echo "rc=$rc tries=$i"; tail -8 /tmp/build25.log
+= background_tasks_changed
+= task_started
+< Command running in background with ID: b7ldtuz3q. Output is being written to: /builds/looper/doppelganger/homes/looper-25/tmp/claude-61000/-builds-looper-doppelganger-issues-25/8bd8a5e2-f267-4d6a-a496-098cec395d7f/tasks/b7ldtuz3q.output. You will be notified when it completes. To check interim outpu...
+That was the old monitor ending. The new retry loop is running; I'll wait for it.
+> Bash f=/builds/looper/doppelganger/homes/looper-25/tmp/claude-61000/-builds-looper-doppelganger-issues-25/8bd8a5e2-f267-4d6a-a496-098cec395d7f/tasks/b7ldtuz3q.output; timeout 590 bash -c "until grep -q '^rc=' $f; do sleep 15; done"; cat $f; tail -3 /tmp/build25.log
+= task_started
+= task_updated
+= task_notification
+= background_tasks_changed
+= task_notification
+< rc=1 tries=1 [2026-11-24T19:52:53Z] checkpoint of #25 (a build) pushed to looper/doppelganger-25:  4 files changed, 262 insertions(+), 1 deletion(-) [2026-11-24T19:52:53Z] build requested: doppelganger 2f5e093, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipel...
+The build ran but failed after 19 seconds. I'll fetch the job log to see why.
+> Bash cat /tmp/build25.log; for j in $(curl -s "https://gitlab.com/api/v4/projects/tacplus-dev%2Fbuild/pipelines/3110417391/jobs" | python3 -c 'import json,sys;[print(j["id"],j["name"],j["status"]) for j in json.load(sys.stdin)]' 2>&1 | tee /dev/stderr | awk '{print $1}'); do curl -s "https://gitlab.com/a...
+< Traceback (most recent call last):   File "<string>", line 1, in <module>     import json,sys;[print(j["id"],j["name"],j["status"]) for j in json.load(sys.stdin)]                            ~^^^^^^ TypeError: string indices must be integers, not 'str' {"message":"401 Unauthorized"}{"message":"401 Un...
+= thinking_tokens
+= thinking_tokens
+> Bash ls -la /tmp/build25.log; /usr/local/bin/repo-looper --help 2>&1 | grep -i -A2 "log\|build" | head -40; ls /builds/tacplus-dev/looper/looper-runs/20261124T194225Z-issue-25/
+< -rw-r--r-- 1 looper-25 looper-25 489 Nov 24 19:53 /tmp/build25.log                                       one build a batch (the merge train, looper#86), while the repository                                       has a report running or a land queued   repo-looper --repo NAME --verdict DIR   the mana...
+> Bash d=/builds/tacplus-dev/looper/looper-runs/20261124T194225Z-issue-25; tail -5 $d/builds.log; ls -R $d/builds | head; 
+< [2026-11-24T19:52:35Z] GitLab refused the build of 2f5e093 with the input report (curl: (22) The requested URL returned error: 422 {"message":{"base":["Project exceeded the allowed number of jobs in active pipelines. Retry later."]}} ): its CI file may not declare it yet (looper#195); started again ...
+= thinking_tokens
+= thinking_tokens
+> Bash ls /builds/tacplus-dev/looper/looper-runs/20261124T194225Z-issue-25/builds | tail -4; cat /builds/tacplus-dev/looper/looper-runs/20261124T194225Z-issue-25/builds/$(ls -t /builds/tacplus-dev/looper/looper-runs/20261124T194225Z-issue-25/builds | head -1) | tail -30; which glab; env | grep -i gitlab | ...
+< 20261124T195253Z-18719513.cancelled 20261124T195253Z-18719513.started 20261124T195253Z-18719513.taken 20261124T195253Z-18719513.wait failed /usr/local/bin/glab GITLAB_USER_ID=… CI_SERVER_NAME=… GITLAB_USER_EMAIL=… CI_REGISTRY_USER=… CI_API_V4_URL=… GITLAB_USER_LOGIN=… CI_DEPENDENCY_PROXY_GROUP_IMAGE...
+> Bash cd /tmp; glab api "projects/tacplus-dev%2Fbuild/pipelines/3110417391/jobs" 2>&1 | head -c 1500
+< {"message":"404 Project Not Found"}glab: 404 Project Not Found (HTTP 404) Shell cwd was reset to /builds/looper/doppelganger/issues/25
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/doppelganger/issues/25; for i in $(seq 1 20); do /usr/local/bin/repo-looper --repo doppelganger --issue 25 --build > /tmp/build25.log 2>&1; rc=$?; grep -q "exceeded the allowed" /tmp/build25.log || break; sleep 180; done; echo "rc=$rc tries=$i"; cat /tmp/build25.log | tail -6
+= background_tasks_changed
+= task_started
+< Command running in background with ID: bj8fyxvr8. Output is being written to: /builds/looper/doppelganger/homes/looper-25/tmp/claude-61000/-builds-looper-doppelganger-issues-25/8bd8a5e2-f267-4d6a-a496-098cec395d7f/tasks/bj8fyxvr8.output. You will be notified when it completes. To check interim outpu...
+> Bash f=/builds/looper/doppelganger/homes/looper-25/tmp/claude-61000/-builds-looper-doppelganger-issues-25/8bd8a5e2-f267-4d6a-a496-098cec395d7f/tasks/bj8fyxvr8.output; timeout 590 bash -c "until grep -q '^rc=' $f; do sleep 15; done"; cat $f
+= task_started
+= task_updated
+= task_notification
+= background_tasks_changed
+= task_notification
+< rc=1 tries=1 [2026-11-24T19:54:10Z] checkpoint of #25 (a build) pushed to looper/doppelganger-25:  4 files changed, 306 insertions(+), 1 deletion(-) [2026-11-24T19:54:10Z] build requested: doppelganger 2f5e093, the gates full (no gates.yaml) the build job https://gitlab.com/tacplus-dev/build/-/pipel...
+= thinking_tokens
+= thinking_tokens
+It failed again after 17 seconds. I'll check whether the pipeline's job details are readable anywhere.
+> Bash curl -s -o /dev/null -w '%{http_code}\n' https://gitlab.com/tacplus-dev/build/-/pipelines/3110422093.json; curl -s "https://gitlab.com/api/v4/projects/tacplus-dev%2Fbuild" | head -c 200; echo; grep -rn "failed\|verdict" /builds/tacplus-dev/looper/looper-runs/20261124T194225Z-issue-25/builds.log | ta...
+< 302 {"message":"404 Project Not Found"} 17:[2026-11-24T19:53:36Z] the build https://gitlab.com/tacplus-dev/build/-/pipelines/3110417391 for its model: its pipeline is failed 20261124T194225Z-issue-25
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/doppelganger/issues/25; /usr/local/bin/repo-looper --repo doppelganger --issue-text 24 | grep -B2 -A12 "manager merged" | head -40
+< <<issue-text nonce=[redacted] author=tacplus-manager[bot] association=NONE role=data>> The manager merged [`looper/doppelganger-24`](https://github.com/tacplus-dev/doppelganger/tree/looper/doppelganger-24) on main: 7176b3b..cd13a12, on the gates full (no gates.yaml), a build jo...
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+= thinking_tokens
+> Bash cd /builds/looper/doppelganger/issues/25; /usr/local/bin/repo-looper --repo doppelganger --issue 25 --checkpoint "Done: 2f5e093 pins BASE_IMAGE to alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf (Docker Hub's digest of the tag today) and scripts/release_test.sh fa...
+= task_started
+= task_notification
+< [2026-11-24T19:55:27Z] checkpoint of #25 (a step) pushed to looper/doppelganger-25:  4 files changed, 340 insertions(+), 1 deletion(-) [2026-11-24T19:55:29Z] checkpoint of #25 (land queued) pushed to looper/doppelganger-25:  5 files changed, 344 insertions(+), 1 deletion(-) [2026-11-24T19:55:31Z] qu...
+I've queued the fix for #25 with the manager to land on main, but it is not verified: both build jobs I ran came back red, and I couldn't read why.
+
+**The change (commit 2f5e093):**
+- **`Dockerfile`:** the base now defaults to `alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf`. That is the digest Docker Hub serves for `alpine:3.24` today.
+- **`scripts/release_test.sh`:** a new check fails on any `FROM` without `@sha256:`, including bases set through an `ARG` default. A second check feeds it a sample Dockerfile on a floating tag to show it catches one. The whole script passes locally.
+
+**The builds:** GitLab first refused to start them at all, because the project had too many active jobs. Once they started, both failed within 20 seconds (pipelines 3110417391 and 3110422093). I can't see their logs from here: the build project's API returns 404/401. I think it's the build system, not the change, for two reasons:
+- The full gates start with `tacplus build`, which can't finish in under 20 seconds.
+- The looper's log shows each of these builds was restarted "without the input report" after the refusal (looper#195).
+
+So I queued the land anyway, and the manager's own build will decide. If it comes back red, its verdict will carry the failure and the next run fixes it and lands again.
+
+**Left for the next run, after a green merge:**
+1. Tag `v0.2.3` at the merge and push it. It ships from main: main has had no features since `v0.2.2` and there are no `release/*` branches, so nothing to backport.
+2. Check the release workflow publishes `0.2.3`.
+3. Update STATE.md (v0.2.3, base pinned by digest) in a commit of its own and land it.
+4. Comment on #25 and close it.
+
+The issue's comments since it was opened are all the looper bot's, none from a member, so nothing there changed the work.
+= success: I've queued the fix for #25 with the manager to land on main, but it is not verified: both build jobs I ran came back red, and I couldn't read why.
+
+**The change (commit 2f5e093):**
+- **`Dockerfile`:** the base now defaults to `alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf`. That is the digest Docker Hub serves for `alpine:3.24` today.
+- **`scripts/release_test.sh`:** a new check fails on any `FROM` without `@sha256:`, including bases set through an `ARG` default. A second check feeds it a sample Dockerfile on a floating tag to show it catches one. The whole script passes locally.
+
+**The builds:** GitLab first refused to start them at all, because the project had too many active jobs. Once they started, both failed within 20 seconds (pipelines 3110417391 and 3110422093). I can't see their logs from here: the build project's API returns 404/401. I think it's the build system, not the change, for two reasons:
+- The full gates start with `tacplus build`, which can't finish in under 20 seconds.
+- The looper's log shows each of these builds was restarted "without the input report" after the refusal (looper#195).
+
+So I queued the land anyway, and the manager's own build will decide. If it comes back red, its verdict will carry the failure and the next run fixes it and lands again.
+
+**Left for the next run, after a green merge:**
+1. Tag `v0.2.3` at the merge and push it. It ships from main: main has had no features since `v0.2.2` and there are no `release/*` branches, so nothing to backport.
+2. Check the release workflow publishes `0.2.3`.
+3. Update STATE.md (v0.2.3, base pinned by digest) in a commit of its own and land it.
+4. Comment on #25 and close it.
+
+The issue's comments since it was opened are all the looper bot's, none from a member, so nothing there changed the work.
+= usage: {"claude-opus-5-5":{"inputTokens":48,"outputTokens":7521,"cacheReadInputTokens":911805,"cacheCreationInputTokens":37560,"webSearchRequests":0,"costUSD":0.633453,"contextWindow":1000000,"maxOutputTokens":128000,"thinkingTokens":1597,"canonicalModel":"claude-opus-5-5","provider":"firstParty","costBasis":"list"}}
