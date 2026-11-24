@@ -79,6 +79,23 @@ check "the Dockerfile upgrades the base's packages before adding its own" \
   "$(grep -o 'apk [a-z]* --no-cache' "$here/../Dockerfile" | head -2 | tr '\n' ' ')" \
   "apk upgrade --no-cache apk add --no-cache "
 
+# Every base is pinned by digest, never a floating tag (#25; tacplus-dev/roadmap
+# decisions/security-gates-ship-only-2026-11-23.md, point 2): each FROM's image, its ${ARG}s taken at their
+# defaults, is <image>:<tag>@sha256:<digest>, so a rebuild of the same commit ships the same base.
+unpinned() { # Dockerfile: each FROM image without a digest, one per line
+  awk '
+    toupper($1) == "ARG" && index($2, "=") { split($2, kv, "="); def[kv[1]] = kv[2] }
+    toupper($1) == "FROM" {
+      img = ""
+      for (i = 2; i <= NF; i++) if ($i !~ /^--/) { img = $i; break }
+      for (k in def) { gsub("\\$\\{" k "\\}", def[k], img); gsub("\\$" k "$", def[k], img) }
+      if (img !~ /:[^\/@]+@sha256:[0-9a-f]{64}$/) print img
+    }' "$1"
+}
+check "the Dockerfile pins every base by digest" "$(unpinned "$here/../Dockerfile")" ""
+printf 'ARG B=alpine:3.24\nFROM ${B}\nFROM golang:1.25@sha256:%064d AS b\nFROM $B\n' 0 > "$repo/Dockerfile.floating"
+check "a FROM on a floating tag is caught" "$(unpinned "$repo/Dockerfile.floating" | tr '\n' ' ')" "alpine:3.24 alpine:3.24 "
+
 if ((fails)); then
   echo "release_test.sh: $fails failed"
   exit 1
