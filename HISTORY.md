@@ -22,3 +22,4 @@ Append-only: add entries at the end, never edit or remove one (CI enforces it). 
 - 2026-11-17 looper issue Dockerfile has no HEALTHCHECK (trivy DS-0026, new in the build's security checks) (#23)
 - 2026-11-23 looper release v0.2.2 (https://github.com/tacplus-dev/doppelganger/releases/tag/v0.2.2)
 - 2026-11-23 looper issue Pinned images behind their lines: relock (tacplus.lock: tacplus 2.6.13 → 2.6.14, and 1 more) (#24)
+- 2026-11-25 looper release v0.2.3 (https://github.com/tacplus-dev/doppelganger/releases/tag/v0.2.3)
